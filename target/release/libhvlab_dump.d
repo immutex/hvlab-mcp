@@ -1,0 +1,1 @@
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\libhvlab_dump.rlib: C:\Users\mutex\Desktop\Projects\hyperv-mcp\crates\hvlab-dump\src\analyze.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\crates\hvlab-dump\src\bugcheck.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\crates\hvlab-dump\src\header.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\crates\hvlab-dump\src\lib.rs

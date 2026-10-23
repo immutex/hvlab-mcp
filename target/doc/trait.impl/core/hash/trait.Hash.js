@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["hvlab_core",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"enum\" href=\"hvlab_core/error/enum.ErrorCode.html\" title=\"enum hvlab_core::error::ErrorCode\">ErrorCode</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"enum\" href=\"hvlab_core/vm_state/enum.VmState.html\" title=\"enum hvlab_core::vm_state::VmState\">VmState</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"struct\" href=\"hvlab_core/ids/struct.JobId.html\" title=\"struct hvlab_core::ids::JobId\">JobId</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"struct\" href=\"hvlab_core/ids/struct.PlanId.html\" title=\"struct hvlab_core::ids::PlanId\">PlanId</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"struct\" href=\"hvlab_core/ids/struct.VmId.html\" title=\"struct hvlab_core::ids::VmId\">VmId</a>",0]]],["hvlab_dump",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.97.1/core/hash/trait.Hash.html\" title=\"trait core::hash::Hash\">Hash</a> for <a class=\"enum\" href=\"hvlab_dump/header/enum.DumpKind.html\" title=\"enum hvlab_dump::header::DumpKind\">DumpKind</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1316,282]}

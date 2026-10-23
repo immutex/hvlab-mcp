@@ -1,0 +1,14 @@
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\deps\thiserror-64b4da5e1ddc3cad.d: C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\build\thiserror-e74488f1f07d8d0b\out/private.rs
+
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\deps\libthiserror-64b4da5e1ddc3cad.rlib: C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\build\thiserror-e74488f1f07d8d0b\out/private.rs
+
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\deps\libthiserror-64b4da5e1ddc3cad.rmeta: C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\build\thiserror-e74488f1f07d8d0b\out/private.rs
+
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs:
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\release\build\thiserror-e74488f1f07d8d0b\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\mutex\\Desktop\\Projects\\hyperv-mcp\\target\\release\\build\\thiserror-e74488f1f07d8d0b\\out

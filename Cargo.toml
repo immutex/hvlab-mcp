@@ -1,0 +1,66 @@
+[workspace]
+resolver = "3"
+members = ["crates/hvlab", "crates/hvlab-core", "crates/hvlab-dump"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hvlab/hvlab"
+description = "Hyper-V control plane for agents and humans: MCP server + CLI"
+
+[workspace.dependencies]
+hvlab-core = { path = "crates/hvlab-core", version = "0.1.0" }
+hvlab-dump = { path = "crates/hvlab-dump", version = "0.1.0" }
+
+anyhow = "1.0.104"
+bytes = "1.12.1"
+clap = { version = "4.6.7", features = ["derive", "string"] }
+figment = { version = "0.10.19", features = ["toml", "env"] }
+proptest = "1.12.0"
+rstest = "0.28.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+thiserror = "2.0.21"
+time = { version = "0.3.55", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter", "json", "fmt"] }
+uuid = { version = "1.29.0", features = ["v4", "v7", "serde"] }
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+future-incompatible = { level = "warn", priority = -2 }
+nonstandard_style = { level = "deny", priority = -1 }
+rust_2018_idioms = { level = "warn", priority = -2 }
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = 1 }
+redundant_clone = { level = "deny", priority = 2 }
+needless_collect = { level = "deny", priority = 2 }
+unwrap_used = { level = "deny", priority = 2 }
+expect_used = { level = "deny", priority = 2 }
+# Deliberate deviations, each with a reason:
+module_name_repetitions = "allow"     # `dump::DumpHeader` reads better than the alternative
+must_use_candidate = "allow"          # nearly every accessor is must-use; the noise buries real signals
+cast_possible_truncation = "allow"    # Win32 and dump formats are 32-bit by nature; checked at boundaries
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+multiple_crate_versions = "allow"     # cargo-deny owns this, not clippy
+missing_errors_doc = "allow"          # `# Errors` is on the public surface only; enforced in review
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+# Keep debug symbols on release-with-debug for profiling
+[profile.profiling]
+inherits = "release"
+panic = "unwind"
+strip = false
+debug = true

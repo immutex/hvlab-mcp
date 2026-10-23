@@ -1,0 +1,12 @@
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\debug\deps\thiserror-fad03f463e0a44dc.d: C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\debug\build\thiserror-8bd3d6699a0a020b\out/private.rs
+
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\debug\deps\libthiserror-fad03f463e0a44dc.rmeta: C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\debug\build\thiserror-8bd3d6699a0a020b\out/private.rs
+
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs:
+C:\Users\mutex\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs:
+C:\Users\mutex\Desktop\Projects\hyperv-mcp\target\debug\build\thiserror-8bd3d6699a0a020b\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\mutex\\Desktop\\Projects\\hyperv-mcp\\target\\debug\\build\\thiserror-8bd3d6699a0a020b\\out
