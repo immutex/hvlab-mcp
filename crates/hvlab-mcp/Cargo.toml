@@ -9,13 +9,16 @@ description = "MCP server exposing hvlab capabilities over stdio/HTTP"
 [dependencies]
 hvlab-core = { workspace = true }
 hvlab-dump = { workspace = true }
-hvlab-host = { path = "../hvlab-host", version = "0.1.0" }
+hvlab-guest = { workspace = true }
+hvlab-host = { workspace = true }
+hvlab-debug = { workspace = true }
 rmcp = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10.9"
 thiserror = { workspace = true }
-tokio = { workspace = true }
-tracing = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
 
 
 

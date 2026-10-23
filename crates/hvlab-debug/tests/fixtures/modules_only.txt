@@ -1,0 +1,18 @@
+Module list section for a user-mode dump fixture. This file exercises
+module-line parsing without any crash data.
+
+MODULE_LIST:
+mydrv      fffff804`3ba10000  fffff804`3ba22000   mydrv.pdb
+nt         fffff804`3a800000  fffff804`3b600000   nt.pdb
+fastfat    fffff806`7a2c0000  fffff806`7a2e0000   (no symbols)
+
+BUGCHECK_CODE:  a
+
+BUGCHECK_P1: 8
+BUGCHECK_P2: 2
+BUGCHECK_P3: 1
+BUGCHECK_P4: fffff8043a9a4c30
+
+MODULE_NAME: memory_corruption
+
+DEFAULT_BUCKET_ID:  MEMORY_CORRUPTOR_ONE_BIT

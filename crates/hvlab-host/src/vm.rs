@@ -98,20 +98,52 @@ impl VmService {
         self.connection()
     }
 
-    fn connection(&self) -> Result<WMIConnection> {
+    /// Shared connection accessor for sibling modules in this crate.
+    pub(crate) fn connection(&self) -> Result<WMIConnection> {
         WMIConnection::with_namespace_path(&self.namespace)
             .map_err(|e| HvError::new(ErrorCode::Transport, format!("WMI connect failed: {e}")))
+    }
+
+    /// The management service singleton's visibility, which is what
+    /// UAC token filtering removes first. A caller that cannot see it
+    /// also cannot see any VM, so an empty inventory is a *permission*
+    /// fact, not a claim that the host has no VMs (H-38: never answer a
+    /// factual question with a filtered empty set).
+    ///
+    /// # Errors
+    ///
+    /// `ErrorCode::Permission` when the management plane is not visible
+    /// to this caller; `ErrorCode::Transport` on WMI failure.
+    pub fn check_management_visible(&self) -> Result<()> {
+        let conn = self.connection()?;
+        let _ = crate::wmi_util::service_path(&conn, "Msvm_VirtualSystemManagementService")
+            .map_err(|_| {
+                // The provider answered the namespace but hides the
+                // management singleton: UAC token filtering, i.e. this
+                // caller is not in Hyper-V Administrators or is not
+                // elevated. Reporting `Permission` (not `Unsupported`)
+                // matters: the Hyper-V role *is* installed, and telling
+                // the caller otherwise would send them to the wrong fix.
+                HvError::new(
+                    ErrorCode::Permission,
+                    "Hyper-V management is not visible to this caller (elevation or Hyper-V Administrators membership required); VM inventory cannot be reported",
+                )
+            })?;
+        Ok(())
     }
 
     /// List every VM (not the host computer system) on this machine.
     ///
     /// # Errors
     ///
-    /// `ErrorCode::Transport` on WMI failure.
+    /// `ErrorCode::Permission` when Hyper-V management is not available
+    /// to this caller (UAC token filtering — the provider answers but
+    /// hides every VM instance), `ErrorCode::Transport` on WMI failure.
     pub fn list_vms(&self) -> Result<Vec<VmSummary>> {
+        self.check_management_visible()?;
         let conn = self.connection()?;
         let raw: Vec<RawComputerSystem> = conn
-            .raw_query("SELECT Name, ElementName, EnabledState, StatusDescriptions FROM Msvm_ComputerSystem WHERE Caption = 'Virtual Machine'")
+            .raw_query("SELECT Name, ElementName, EnabledState FROM Msvm_ComputerSystem WHERE Caption = 'Virtual Machine'")
             .map_err(|e| wmi_err(&e))?;
         raw.iter().map(VmSummary::try_from).collect()
     }

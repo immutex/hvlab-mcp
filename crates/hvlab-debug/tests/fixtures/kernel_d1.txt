@@ -1,0 +1,24 @@
+BUGCHECK_CODE:  d1
+
+BUGCHECK_P1: 2a2a2a2a2a2a2a2a
+BUGCHECK_P2: 2
+BUGCHECK_P3: 0
+BUGCHECK_P4: fffff8067a2c4a1e
+
+MODULE_NAME: fastfat
+
+IMAGE_NAME:  fastfat.sys
+
+FAILURE_BUCKET_ID:  AV_fastfat!FatReadVolume
+
+DEFAULT_BUCKET_ID:  NULL_CLASS_PTR_READ
+
+PROCESS_NAME:  explorer.exe
+
+SYMBOL_NAME:  fastfat!FatReadVolume+0x8e
+
+STACK_TEXT: 
+00 ffffb908`5c9f2ab8 fffff806`7a2c4a1e fastfat!FatReadVolume+0x8e
+01 ffffb908`5c9f2b60 fffff806`7c2935f0 fastfat!FatCommonRead+0x412
+02 ffffb908`5c9f2cc0 fffff806`7c2d6808 nt!IofCallDriver+0x50
+03 ffffb908`5c9f2d00 fffff806`7c4b7a30 nt!IopSynchronousServiceTail+0x1a8

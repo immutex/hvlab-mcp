@@ -4,8 +4,10 @@ members = [
     "crates/hvlab",
     "crates/hvlab-core",
     "crates/hvlab-dump",
+    "crates/hvlab-guest",
     "crates/hvlab-host",
     "crates/hvlab-mcp",
+    "crates/hvlab-debug",
 ]
 
 [workspace.package]
@@ -20,7 +22,8 @@ description = "Hyper-V control plane for agents and humans: MCP server + CLI"
 hvlab-core = { path = "crates/hvlab-core", version = "0.1.0" }
 hvlab-dump = { path = "crates/hvlab-dump", version = "0.1.0" }
 hvlab-host = { path = "crates/hvlab-host", version = "0.1.0" }
-
+hvlab-guest = { path = "crates/hvlab-guest", version = "0.1.0" }
+hvlab-debug = { path = "crates/hvlab-debug", version = "0.1.0" }
 anyhow = "1.0.104"
 rmcp = { version = "3.7", features = ["server", "macros", "schemars", "transport-io"] }
 tokio-util = { version = "0.7.20", features = ["rt"] }

@@ -1,0 +1,19 @@
+[package]
+name = "hvlab-debug"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Debugger-driven crash dump analysis (cdb subprocess) for hvlab"
+
+[dependencies]
+hvlab-core = { workspace = true }
+hvlab-dump = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

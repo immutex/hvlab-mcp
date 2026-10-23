@@ -1,0 +1,25 @@
+BUGCHECK_CODE:  9f
+
+BUGCHECK_P1: 3
+BUGCHECK_P2: fffff8043ba1e060
+BUGCHECK_P3: ffffd4812e8c0990
+BUGCHECK_P4: ffffd48132de5550
+
+MODULE_NAME: mydriver
+
+IMAGE_NAME:  mydriver.sys
+
+FAILURE_BUCKET_ID:  0x9F_3_IMAGE_mydriver.sys
+
+DEFAULT_BUCKET_ID:  WIN8_DRIVER_FAULT
+
+PROCESS_NAME:  System
+
+SYMBOL_NAME:  mydriver!WorkerRoutine+0x1a
+
+STACK_TEXT: 
+00 ffffd481`32de5a98 fffff804`3aa8b1e0 nt!KiSwapContext+0x76
+01 ffffd481`32de5b30 fffff804`3aa8bf1f nt!KiCommitThreadWait+0x12e
+02 ffffd481`32de5bc0 fffff804`3ba1e07a nt!KeWaitForSingleObject+0x23f
+03 ffffd481`32de5c40 fffff804`3aa4dc17 mydriver!WorkerRoutine+0x1a
+04 ffffd481`32de5c80 fffff804`3b04f6b0 nt!KiStartSystemThread+0x27

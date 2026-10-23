@@ -180,23 +180,32 @@ impl Plan {
 
 /// Canonical JSON: sorted object keys, no insignificant whitespace.
 /// Two logically identical requests produce identical digests.
+///
+/// The encoding is injective: every key and every string is JSON-quoted
+/// (so `:` and `,` inside a value cannot be confused with delimiters),
+/// and the output re-parses to an equal [`serde_json::Value`]. That
+/// property is what makes a digest over this form a sound commitment to
+/// the exact arguments; it is pinned by `canonical_json_is_injective`.
 #[must_use]
 pub fn canonical_json(value: &serde_json::Value) -> String {
+    use serde_json::Value;
+
     match value {
-        serde_json::Value::Object(map) => {
-            let sorted: BTreeMap<&String, &serde_json::Value> = map.iter().collect();
+        Value::Object(map) => {
+            // BTreeMap gives sorted, unique keys; every key is emitted
+            // through `to_string`, so key text is always quoted.
+            let sorted: BTreeMap<&str, &Value> = map.iter().map(|(k, v)| (k.as_str(), v)).collect();
             let inner = sorted
                 .iter()
                 .map(|(k, v)| {
                     let key = serde_json::to_string(k).unwrap_or_default();
-                    let value = canonical_json(v);
-                    format!("{key}:{value}")
+                    format!("{key}:{}", canonical_json(v))
                 })
                 .collect::<Vec<_>>()
                 .join(",");
             format!("{{{inner}}}")
         }
-        serde_json::Value::Array(items) => {
+        Value::Array(items) => {
             let inner = items
                 .iter()
                 .map(canonical_json)
@@ -204,6 +213,8 @@ pub fn canonical_json(value: &serde_json::Value) -> String {
                 .join(",");
             format!("[{inner}]")
         }
+        // Scalars: `to_string` emits valid JSON (quoted strings, bare
+        // numbers/bools, `null`), so values cannot swallow delimiters.
         other => serde_json::to_string(other).unwrap_or_default(),
     }
 }
@@ -295,6 +306,43 @@ mod tests {
             let a = serde_json::json!([1, 2]);
             let b = serde_json::json!([2, 1]);
             assert_ne!(canonical_json(&a), canonical_json(&b));
+        }
+
+        #[test]
+        fn delimiter_inside_value_cannot_confuse_the_form() {
+            // The value contains both delimiters and key-like text; the
+            // quoted encoding must keep it distinct from a real sibling
+            // key (injectivity is the property the digest's soundness
+            // rests on).
+            let a = serde_json::json!({"vm": "x\",\"checkpoint\":\"c"});
+            let b = serde_json::json!({"vm": "x", "checkpoint": "c"});
+            assert_ne!(canonical_json(&a), canonical_json(&b));
+        }
+
+        #[test]
+        fn present_null_differs_from_absent() {
+            let a = serde_json::json!({"vm": "x", "note": null});
+            let b = serde_json::json!({"vm": "x"});
+            assert_ne!(canonical_json(&a), canonical_json(&b));
+        }
+
+        #[test]
+        fn canonical_form_reparses_to_the_same_value() {
+            // Round-trip check: the canonical string is valid JSON that
+            // decodes to an equal value, which is what makes the digest a
+            // faithful commitment.
+            let cases = [
+                serde_json::json!({"vm": "x", "checkpoint": "c", "n": 3, "ok": true}),
+                serde_json::json!({"a": {"b": [1, "two", null]}, "z": 0}),
+                serde_json::json!({"vm": "x\",\"checkpoint\":\"c"}),
+                serde_json::json!([]),
+                serde_json::json!({}),
+            ];
+            for v in cases {
+                let parsed: serde_json::Value = serde_json::from_str(&canonical_json(&v))
+                    .expect("canonical form is valid JSON");
+                assert_eq!(parsed, v, "round-trip failed for {v}");
+            }
         }
     }
 

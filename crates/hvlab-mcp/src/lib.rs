@@ -4,7 +4,16 @@
 //! adapters over the backend crates; each carries an output schema and
 //! a safety class. All `#[tool]` methods live on [`HvlabServer`] so the
 //! registry is a single `ToolRouter<HvlabServer>`.
+//!
+//! Plan-gated tools are authorized centrally in
+//! [`rmcp::ServerHandler::call_tool`] — before the router sees the call —
+//! so the token digest is taken over the exact JSON the client sent.
 
+use std::future::Future;
+
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use hvlab_core::error::ErrorCode;
 use rmcp::{
     handler::server::wrapper::{Json, Parameters},
     model::ServerConfig,
@@ -13,32 +22,201 @@ use rmcp::{
     transport::stdio,
 };
 
+pub mod plans;
 pub mod tools;
+pub use plans::{PLAN_GATED_TOOLS, PlanConfirm, PlanMintResult, PlanStore};
 pub use tools::{
     CheckpointCreateArgs, CheckpointDeleteArgs, CheckpointEntry, CheckpointListArgs,
     CheckpointMutationResult, CheckpointRestoreArgs, DumpInspectArgs, DumpInspectResult, VmEntry,
-    VmGetArgs, VmListArgs,
+    VmGetArgs,
 };
+// Tool bodies reference the wide wire-type surface directly.
+#[allow(
+    clippy::wildcard_imports,
+    reason = "the wide tool-body wire-type surface is the point"
+)]
+use tools::*;
 
+/// Map a typed [`HvError`] onto the MCP wire (H-38: one error channel).
+///
+/// The JSON-RPC code distinguishes the coarse failure class, and the
+/// `data` payload carries the full structured error — code, message,
+/// retryability, correlation id, context, and any partial results — so
+/// a client can machine-read failures instead of parsing message text.
 fn mcp_err(e: &HvError) -> rmcp::ErrorData {
-    rmcp::ErrorData::internal_error(format!("{}: {}", e.code.as_str(), e.message), None)
+    use rmcp::ErrorData;
+    let code = match e.code {
+        // A malformed request or an unknown target is the client's
+        // fault, not the server's: JSON-RPC invalid-params.
+        ErrorCode::InvalidArgument | ErrorCode::NotFound => rmcp::model::ErrorCode::INVALID_PARAMS,
+        // Every other hvlab code is a server-side outcome, not a
+        // malformed client request; JSON-RPC has one bucket for that.
+        _ => rmcp::model::ErrorCode::INTERNAL_ERROR,
+    };
+    let structured = serde_json::to_value(e).unwrap_or_else(|_| {
+        serde_json::json!({
+            "code": e.code.as_str(),
+            "message": e.message,
+        })
+    });
+    ErrorData::new(
+        code,
+        format!("{}: {}", e.code.as_str(), e.message),
+        Some(structured),
+    )
 }
 
-use hvlab_core::error::{ErrorCode, HvError};
+use hvlab_core::HvError;
 
 fn io_err(path: &str, e: &std::io::Error) -> HvError {
     HvError::new(ErrorCode::Transport, format!("io error on {path}: {e}"))
 }
 
-/// The assembled hvlab server.
+/// Tools that never mutate host, guest, or device state (class R).
+/// Everything not here and not plan-gated is class M.
+const READ_ONLY_TOOLS: &[&str] = &[
+    "hv_capabilities",
+    "hv_checkpoint_list",
+    "hv_dump_analyze",
+    "hv_dump_find",
+    "hv_dump_inspect",
+    "hv_guest_ping",
+    "hv_host_default_switch",
+    "hv_host_info",
+    "hv_host_services",
+    "hv_host_storage_roots",
+    "hv_plan",
+    "hv_switch_list",
+    "hv_tools_list",
+    "hv_vhd_get",
+    "hv_vhd_inspect",
+    "hv_vm_get",
+    "hv_vm_get_config",
+    "hv_vm_list",
+    "hv_vm_wait_state",
+];
+
+/// The assembled hvlab server. Holds the plan-token store so D/X
+/// authorizations survive across calls on the same server instance.
 #[derive(Clone)]
-pub struct HvlabServer;
+pub struct HvlabServer {
+    plans: std::sync::Arc<std::sync::Mutex<plans::PlanStore>>,
+}
 
 impl HvlabServer {
     /// Build the server.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            plans: std::sync::Arc::new(std::sync::Mutex::new(plans::PlanStore::default())),
+        }
+    }
+
+    /// Lock the plan store, mapping a poisoned lock to an internal error.
+    fn lock_plans(&self) -> std::sync::MutexGuard<'_, plans::PlanStore> {
+        self.plans
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Test seam: authorize from a raw JSON args value.
+    #[cfg(test)]
+    #[allow(
+        clippy::needless_pass_by_value,
+        reason = "test seam mirrors the JSON call shape"
+    )]
+    pub(crate) fn authorize_args(
+        &self,
+        action: &str,
+        args: serde_json::Value,
+    ) -> Result<(), rmcp::ErrorData> {
+        self.authorize_value(action, &args)
+    }
+
+    /// Verify and consume a plan token for `action` from raw args.
+    ///
+    /// `args` must carry a `confirm` object (`{plan_id, digest}`); the
+    /// remaining keys must be exactly what the token was minted for.
+    fn authorize_value(
+        &self,
+        action: &str,
+        args: &serde_json::Value,
+    ) -> Result<(), rmcp::ErrorData> {
+        let mut obj = match args {
+            serde_json::Value::Object(o) => o.clone(),
+            _ => {
+                return Err(mcp_err(&HvError::new(
+                    ErrorCode::Internal,
+                    "args not an object",
+                )));
+            }
+        };
+        let confirm: plans::PlanConfirm = match obj.remove("confirm") {
+            Some(c) => match serde_json::from_value(c) {
+                Ok(c) => c,
+                Err(e) => {
+                    return Err(mcp_err(&HvError::invalid_argument(
+                        "confirm",
+                        &format!(
+                            "plan confirmation is required and must be {{plan_id, digest}}: {e}"
+                        ),
+                    )));
+                }
+            },
+            None => {
+                return Err(mcp_err(&HvError::policy_denied(
+                    "plan",
+                    "this call requires a plan token: mint one with hv_plan for these exact arguments",
+                )));
+            }
+        };
+        self.lock_plans()
+            .verify_and_consume(&confirm, action, &serde_json::Value::Object(obj))
+            .map_err(|e| mcp_err(&e))
+    }
+
+    /// Authorize a plan-gated call and hand back the args to run with.
+    ///
+    /// The digest is taken over the **raw JSON** the client sent, because
+    /// that is the only representation identical at mint time (`hv_plan`
+    /// receives `arguments` verbatim) and at call time. Re-serializing
+    /// the typed struct would inject serde defaults the client never
+    /// wrote — which is exactly how a correctly minted token used to be
+    /// rejected (see `plans::digest_for`).
+    fn authorize_call(
+        &self,
+        action: &str,
+        arguments: Option<serde_json::Map<String, serde_json::Value>>,
+    ) -> Result<serde_json::Map<String, serde_json::Value>, rmcp::ErrorData> {
+        let value = serde_json::Value::Object(arguments.unwrap_or_default());
+        self.authorize_value(action, &value)?;
+        match value {
+            serde_json::Value::Object(mut m) => {
+                m.remove("confirm");
+                Ok(m)
+            }
+            _ => Ok(serde_json::Map::new()),
+        }
+    }
+
+    /// Classify a registered tool by name: `R`, `M`, `D`, or `X`.
+    ///
+    /// The D/X set is the plan-gated set; guest execution is arbitrary
+    /// code (X), the destructive host operations are D, and everything
+    /// else is either a read (R) or a reversible mutation (M).
+    #[must_use]
+    pub fn tool_class(name: &str) -> &'static str {
+        if plans::is_plan_gated(name) {
+            if name.starts_with("hv_guest_") {
+                "X"
+            } else {
+                "D"
+            }
+        } else if READ_ONLY_TOOLS.contains(&name) {
+            "R"
+        } else {
+            "M"
+        }
     }
 
     /// Run over stdio until the client disconnects.
@@ -60,8 +238,14 @@ impl Default for HvlabServer {
 }
 
 #[tool_router]
-#[allow(clippy::unused_self)] // rmcp tool fns require a &self receiver
+#[allow(clippy::unused_self, reason = "rmcp tool fns require a &self receiver")]
 impl HvlabServer {
+    /// The registered tool router: names, descriptions, and schemas for
+    /// every tool this server exposes.
+    #[must_use]
+    pub fn router() -> rmcp::handler::server::router::tool::ToolRouter<Self> {
+        Self::tool_router()
+    }
     /// `hv_dump_inspect`.
     #[tool(
         description = "Inspect a Windows crash dump header: bugcheck code, its documented name, and parameters. Fast (< 5 ms), no debugger required."
@@ -76,9 +260,15 @@ impl HvlabServer {
                 other => HvError::new(ErrorCode::InvalidArgument, other.to_string()),
             })
         })?;
-        let kind = header
-            .read_kind(&args.path)
-            .unwrap_or(hvlab_dump::DumpKind::Unknown(0));
+        // An unreadable extended header is a data problem worth
+        // reporting, not an "unknown kind" to paper over (M-1: no
+        // success-shaped lies about the file).
+        let kind = header.read_kind(&args.path).map_err(|e| {
+            mcp_err(&HvError::new(
+                hvlab_core::error::ErrorCode::Transport,
+                format!("reading dump kind from {}: {e}", args.path),
+            ))
+        })?;
         let info = hvlab_dump::bugcheck_name(header.bug_check_code);
         Ok(Json(DumpInspectResult {
             os_version: format!("{}.{}", header.os_version.0, header.os_version.1),
@@ -164,7 +354,7 @@ impl HvlabServer {
 
     /// `hv_checkpoint_delete`.
     #[tool(
-        description = "Delete a checkpoint. Set include_subtree to remove every checkpoint below it too."
+        description = "Delete a checkpoint (class D). Mint a plan token with hv_plan for these exact arguments first, then pass confirm. Set include_subtree to remove every checkpoint below it too."
     )]
     fn hv_checkpoint_delete(
         &self,
@@ -189,7 +379,7 @@ impl HvlabServer {
 
     /// `hv_checkpoint_restore`.
     #[tool(
-        description = "Restore a checkpoint, discarding all state after it. Destructive: the VM is reverted."
+        description = "Restore a checkpoint, discarding all state after it. Destructive (class D): mint a plan token with hv_plan for these exact arguments, then pass confirm."
     )]
     fn hv_checkpoint_restore(
         &self,
@@ -206,6 +396,657 @@ impl HvlabServer {
             checkpoint: None,
         }))
     }
+
+    /// `hv_plan`.
+    #[tool(
+        description = "Mint a plan token for one class-D or class-X call. Pass action (tool name) and the exact args the call will use; the returned digest is bound to them. Tokens expire in five minutes and are single-use."
+    )]
+    fn hv_plan(
+        &self,
+        Parameters(args): Parameters<PlanArgs>,
+    ) -> Result<Json<PlanResult>, rmcp::ErrorData> {
+        let (minted, _confirm) = self
+            .lock_plans()
+            .mint(&args.action, &args.args)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(PlanResult {
+            plan_id: minted.plan_id,
+            digest: minted.digest,
+            expires_at: minted.expires_at,
+            summary: minted.summary,
+        }))
+    }
+
+    /// `hv_host_info`.
+    #[tool(description = "Host computer system info: name, logical CPU count, RAM, state.")]
+    fn hv_host_info(&self) -> Result<Json<HostInfoResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::HostService::connect().map_err(|e| mcp_err(&e))?;
+        let info = svc.host_info().map_err(|e| mcp_err(&e))?;
+        Ok(Json(HostInfoResult {
+            name: info.name,
+            cpu_count: info.cpu_count,
+            ram_bytes: info.ram_bytes,
+            state: info.state.to_string(),
+        }))
+    }
+
+    /// `hv_host_services`.
+    #[tool(
+        description = "Hyper-V-related host services (vmms, vmicheartbeat, ...) with state and start mode."
+    )]
+    fn hv_host_services(&self) -> Result<Json<HostServicesResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::HostService::connect().map_err(|e| mcp_err(&e))?;
+        let services = svc.host_services().map_err(|e| mcp_err(&e))?;
+        Ok(Json(HostServicesResult {
+            services: services
+                .into_iter()
+                .map(|s| ServiceEntry {
+                    name: s.name,
+                    state: s.state,
+                    start_mode: s.start_mode,
+                })
+                .collect(),
+        }))
+    }
+
+    /// `hv_host_storage_roots`.
+    #[tool(description = "Default VHD and VM configuration folders from the VMMS settings.")]
+    fn hv_host_storage_roots(&self) -> Result<Json<StorageRootsResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::HostService::connect().map_err(|e| mcp_err(&e))?;
+        let roots = svc.host_storage_roots().map_err(|e| mcp_err(&e))?;
+        Ok(Json(StorageRootsResult {
+            default_vhd_path: roots.as_ref().map(|r| r.default_vhd_path.clone()),
+            default_vm_path: roots.map(|r| r.default_vm_path),
+        }))
+    }
+
+    /// `hv_host_default_switch`.
+    #[tool(description = "Name of the first virtual switch on the host, when one exists.")]
+    fn hv_host_default_switch(&self) -> Result<Json<DefaultSwitchResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::HostService::connect().map_err(|e| mcp_err(&e))?;
+        let sw = svc.host_default_switch().map_err(|e| mcp_err(&e))?;
+        Ok(Json(DefaultSwitchResult { switch: sw }))
+    }
+
+    /// `hv_vm_start`.
+    #[tool(description = "Start a VM and wait until it reaches Running (or the deadline).")]
+    fn hv_vm_start(
+        &self,
+        Parameters(args): Parameters<VmStartArgs>,
+    ) -> Result<Json<VmEntry>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs.unwrap_or(120));
+        let vm = svc
+            .request_state(id, hvlab_host::REQUESTED_RUNNING, deadline)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmEntry {
+            id: vm.id.to_string(),
+            name: vm.name,
+            state: vm.state.to_string(),
+        }))
+    }
+
+    /// `hv_vm_stop`.
+    #[tool(
+        description = "Stop a VM: shutdown (graceful, needs integration services), save, or turnoff. Polls to a terminal state."
+    )]
+    fn hv_vm_stop(
+        &self,
+        Parameters(args): Parameters<VmStopArgs>,
+    ) -> Result<Json<VmEntry>, rmcp::ErrorData> {
+        let requested = match args.mode.as_str() {
+            "shutdown" => hvlab_host::REQUESTED_SHUTDOWN,
+            "turnoff" => hvlab_host::REQUESTED_OFF,
+            "save" => hvlab_host::REQUESTED_SAVED,
+            other => {
+                return Err(mcp_err(&HvError::invalid_argument(
+                    "mode",
+                    &format!("unknown stop mode {other:?}; use shutdown, save, or turnoff"),
+                )));
+            }
+        };
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs.unwrap_or(180));
+        let vm = svc
+            .request_state(id, requested, deadline)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmEntry {
+            id: vm.id.to_string(),
+            name: vm.name,
+            state: vm.state.to_string(),
+        }))
+    }
+
+    /// `hv_vm_restart`.
+    #[tool(description = "Reboot a VM: requests the Reboot state and waits for it to settle.")]
+    fn hv_vm_restart(
+        &self,
+        Parameters(args): Parameters<VmRestartArgs>,
+    ) -> Result<Json<VmEntry>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs.unwrap_or(180));
+        let vm = svc
+            .request_state(id, hvlab_host::REQUESTED_REBOOT, deadline)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmEntry {
+            id: vm.id.to_string(),
+            name: vm.name,
+            state: vm.state.to_string(),
+        }))
+    }
+
+    /// `hv_vm_wait_state`.
+    #[tool(
+        description = "Poll a VM's EnabledState until it reaches one of the requested states or the deadline. Useful after lifecycle calls and boots."
+    )]
+    fn hv_vm_wait_state(
+        &self,
+        Parameters(args): Parameters<VmWaitStateArgs>,
+    ) -> Result<Json<VmEntry>, rmcp::ErrorData> {
+        let mut targets = Vec::with_capacity(args.states.len());
+        for s in &args.states {
+            targets.push(parse_state(s).ok_or_else(|| {
+                mcp_err(&HvError::invalid_argument(
+                    "states",
+                    &format!("unknown state {s:?}; use off, running, paused, or saved"),
+                ))
+            })?);
+        }
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let deadline = Instant::now() + Duration::from_secs(args.timeout_secs.unwrap_or(120));
+        let vm = svc
+            .wait_state(id, &targets, deadline)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmEntry {
+            id: vm.id.to_string(),
+            name: vm.name,
+            state: vm.state.to_string(),
+        }))
+    }
+
+    /// `hv_vm_rename`.
+    #[tool(description = "Rename a VM (display name change; the GUID is stable).")]
+    fn hv_vm_rename(
+        &self,
+        Parameters(args): Parameters<VmRenameArgs>,
+    ) -> Result<Json<VmEntry>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let vm = svc.rename(id, &args.new_name).map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmEntry {
+            id: vm.id.to_string(),
+            name: vm.name,
+            state: vm.state.to_string(),
+        }))
+    }
+
+    /// `hv_vm_get_config`.
+    #[tool(
+        description = "Read a VM's memory (MB, dynamic flag, buffer), processor count, notes, and nested-virtualization flag."
+    )]
+    fn hv_vm_get_config(
+        &self,
+        Parameters(args): Parameters<VmGetArgs>,
+    ) -> Result<Json<VmConfigResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let cfg = hvlab_host::config::get_config(id).map_err(|e| mcp_err(&e))?;
+        Ok(Json(VmConfigResult {
+            memory_mb: cfg.memory_mb,
+            dynamic_memory: cfg.dynamic_memory,
+            buffer_pct: cfg.buffer_pct,
+            processor_count: cfg.processor_count,
+            notes: cfg.notes,
+            nested_virt: cfg.nested_virt,
+        }))
+    }
+
+    /// `hv_vm_set_notes`.
+    #[tool(
+        description = "Set a VM's notes field. dry_run (default true) returns the diff without applying."
+    )]
+    fn hv_vm_set_notes(
+        &self,
+        Parameters(args): Parameters<VmSetNotesArgs>,
+    ) -> Result<Json<Vec<ConfigDiff>>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let diffs = hvlab_host::config::set_notes(id, &args.notes, args.dry_run)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(diffs.into_iter().map(diff_entry).collect()))
+    }
+
+    /// `hv_vm_set_memory`.
+    #[tool(
+        description = "Set VM memory: startup MB, optional dynamic memory with buffer percentage. dry_run (default true) returns the diff without applying."
+    )]
+    fn hv_vm_set_memory(
+        &self,
+        Parameters(args): Parameters<VmSetMemoryArgs>,
+    ) -> Result<Json<Vec<ConfigDiff>>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let diffs = hvlab_host::config::set_memory(
+            id,
+            args.memory_mb,
+            args.dynamic,
+            args.buffer_pct,
+            args.dry_run,
+        )
+        .map_err(|e| mcp_err(&e))?;
+        Ok(Json(diffs.into_iter().map(diff_entry).collect()))
+    }
+
+    /// `hv_vm_set_processor`.
+    #[tool(
+        description = "Set a VM's virtual processor count. dry_run (default true) returns the diff without applying."
+    )]
+    fn hv_vm_set_processor(
+        &self,
+        Parameters(args): Parameters<VmSetProcessorArgs>,
+    ) -> Result<Json<Vec<ConfigDiff>>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let diffs = hvlab_host::config::set_processor(id, args.count, args.dry_run)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(diffs.into_iter().map(diff_entry).collect()))
+    }
+
+    /// `hv_vhd_create`.
+    #[tool(
+        description = "Create a VHD or VHDX at a path with a given size. Never touches an existing file."
+    )]
+    fn hv_vhd_create(
+        &self,
+        Parameters(args): Parameters<VhdCreateArgs>,
+    ) -> Result<Json<VhdInfoResult>, rmcp::ErrorData> {
+        let format = match args.format.as_deref() {
+            None | Some("vhdx") => hvlab_host::DiskFormat::Vhdx,
+            Some("vhd") => hvlab_host::DiskFormat::Vhd,
+            Some(other) => {
+                return Err(mcp_err(&HvError::invalid_argument(
+                    "format",
+                    &format!("unknown format {other:?}; use vhd or vhdx"),
+                )));
+            }
+        };
+        let disk = hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .create(
+                &args.path,
+                args.size_bytes,
+                format,
+                args.block_size,
+                args.timeout_secs.unwrap_or(300),
+            )
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(vhd_info(&args.path, &disk)))
+    }
+
+    /// `hv_vhd_inspect`.
+    #[tool(
+        description = "Inspect a VHD/VHDX: format, virtual size, block size, parent chain head. Fast, no VM contact."
+    )]
+    fn hv_vhd_inspect(
+        &self,
+        Parameters(args): Parameters<VhdInspectArgs>,
+    ) -> Result<Json<VhdInfoResult>, rmcp::ErrorData> {
+        let disk = hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .inspect(&args.path)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(vhd_info(&args.path, &disk)))
+    }
+
+    /// `hv_vhd_get`.
+    #[tool(
+        description = "Read a disk's live state (attached/in-use flag, size on disk, free space)."
+    )]
+    fn hv_vhd_get(
+        &self,
+        Parameters(args): Parameters<VhdInspectArgs>,
+    ) -> Result<Json<VhdStateResult>, rmcp::ErrorData> {
+        let st = hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .state(&args.path)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(VhdStateResult {
+            path: args.path,
+            in_use: st.in_use,
+            file_size_bytes: st.file_size,
+            free_space_bytes: st.free_space,
+        }))
+    }
+
+    /// `hv_vhd_resize`.
+    #[tool(description = "Resize a VHD/VHDX's virtual size and wait for the job.")]
+    fn hv_vhd_resize(
+        &self,
+        Parameters(args): Parameters<VhdResizeArgs>,
+    ) -> Result<Json<VhdInfoResult>, rmcp::ErrorData> {
+        let disk = hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .resize(
+                &args.path,
+                args.size_bytes,
+                args.timeout_secs.unwrap_or(300),
+            )
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(vhd_info(&args.path, &disk)))
+    }
+
+    /// `hv_vhd_compact`.
+    #[tool(description = "Compact a VHD/VHDX to reclaim unused space; waits for the job.")]
+    fn hv_vhd_compact(
+        &self,
+        Parameters(args): Parameters<VhdCompactArgs>,
+    ) -> Result<Json<VhdInfoResult>, rmcp::ErrorData> {
+        let disk = hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .compact(&args.path, args.timeout_secs.unwrap_or(600))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(vhd_info(&args.path, &disk)))
+    }
+
+    /// `hv_switch_list`.
+    #[tool(
+        description = "List virtual switch names. Requires Hyper-V Administrators; an un-elevated caller sees an empty list rather than an error."
+    )]
+    fn hv_switch_list(&self) -> Result<Json<SwitchListResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::NetworkService::connect().map_err(|e| mcp_err(&e))?;
+        let switches = svc.list_switches().map_err(|e| mcp_err(&e))?;
+        Ok(Json(SwitchListResult {
+            switches: switches.into_iter().map(|s| s.name).collect(),
+        }))
+    }
+
+    /// `hv_switch_create`.
+    #[tool(
+        description = "Create an internal or private virtual switch. External switches are deliberately not offered: binding a physical NIC can take the host offline."
+    )]
+    fn hv_switch_create(
+        &self,
+        Parameters(args): Parameters<SwitchCreateArgs>,
+    ) -> Result<Json<SwitchListResult>, rmcp::ErrorData> {
+        let kind = match args.kind.as_str() {
+            "internal" => hvlab_host::SwitchKind::Internal,
+            "private" => hvlab_host::SwitchKind::Private,
+            other => {
+                return Err(mcp_err(&HvError::invalid_argument(
+                    "kind",
+                    &format!(
+                        "unknown kind {other:?}; use internal or private (external is never offered)"
+                    ),
+                )));
+            }
+        };
+        let created = hvlab_host::NetworkService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .create_switch(&args.name, kind, None, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        // Observed state, not the request (H-11): the provider may have
+        // normalized the name.
+        Ok(Json(SwitchListResult {
+            switches: vec![created.name],
+        }))
+    }
+
+    /// `hv_switch_remove`.
+    #[tool(description = "Remove a virtual switch by name.")]
+    fn hv_switch_remove(
+        &self,
+        Parameters(args): Parameters<SwitchRemoveArgs>,
+    ) -> Result<Json<SwitchRemoveResult>, rmcp::ErrorData> {
+        hvlab_host::NetworkService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .remove_switch(&args.name, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(SwitchRemoveResult { removed: true }))
+    }
+
+    /// `hv_nic_connect`.
+    #[tool(description = "Connect a VM's first NIC to a switch.")]
+    fn hv_nic_connect(
+        &self,
+        Parameters(args): Parameters<NicConnectArgs>,
+    ) -> Result<Json<DeviceMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::NetworkService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .connect_adapter(id, &args.switch, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(DeviceMutationResult {
+            action: "connected".into(),
+        }))
+    }
+
+    /// `hv_nic_disconnect`.
+    #[tool(description = "Disconnect a VM's NIC(s) from their switches.")]
+    fn hv_nic_disconnect(
+        &self,
+        Parameters(args): Parameters<NicDisconnectArgs>,
+    ) -> Result<Json<DeviceMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::NetworkService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .disconnect_adapters(id, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(DeviceMutationResult {
+            action: "disconnected".into(),
+        }))
+    }
+
+    /// `hv_device_add_disk`.
+    #[tool(description = "Attach a VHD/VHDX file to a VM as a new disk.")]
+    fn hv_device_add_disk(
+        &self,
+        Parameters(args): Parameters<AddDiskArgs>,
+    ) -> Result<Json<DeviceMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .attach_disk(id, &args.path, true, 0, 0, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(DeviceMutationResult {
+            action: "attached".into(),
+        }))
+    }
+
+    /// `hv_device_remove_disk`.
+    #[tool(description = "Detach a disk (by its VHD path) from a VM. The file is not deleted.")]
+    fn hv_device_remove_disk(
+        &self,
+        Parameters(args): Parameters<RemoveDiskArgs>,
+    ) -> Result<Json<DeviceMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::StorageService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .detach_disk(id, &args.path, args.timeout_secs.unwrap_or(120))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(DeviceMutationResult {
+            action: "detached".into(),
+        }))
+    }
+
+    /// `hv_guest_ping`.
+    #[tool(
+        description = "Probe a guest over PowerShell Direct: returns the verified guest hostname. Read-only."
+    )]
+    fn hv_guest_ping(
+        &self,
+        Parameters(args): Parameters<GuestPingArgs>,
+    ) -> Result<Json<GuestPingResult>, rmcp::ErrorData> {
+        let mut session =
+            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        let hostname = session.ping().map_err(|e| mcp_err(&e))?;
+        Ok(Json(GuestPingResult { hostname }))
+    }
+
+    /// `hv_guest_exec`.
+    #[tool(
+        description = "Run a program in a guest via PowerShell Direct. argv form, no shell. Requires a plan token: mint one with hv_plan for these exact arguments, then pass confirm. Class X."
+    )]
+    fn hv_guest_exec(
+        &self,
+        Parameters(args): Parameters<GuestExecArgs>,
+    ) -> Result<Json<GuestExecResult>, rmcp::ErrorData> {
+        let mut session =
+            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        // The authorized timeout is enforced, not advisory (H-39: no
+        // parameter is accepted and ignored).
+        let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(60));
+        let out = session
+            .exec_with_timeout(
+                &hvlab_guest::ExecSpec {
+                    program: args.program,
+                    argv: args.argv,
+                },
+                timeout,
+            )
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(GuestExecResult {
+            exit_code: i64::from(out.exit_code),
+            stdout: out.stdout_text(),
+            stderr: out.stderr_text(),
+        }))
+    }
+
+    /// `hv_guest_powershell`.
+    #[tool(
+        description = "Run a PowerShell script in a guest via PowerShell Direct; the script is encoded before sending and never string-interpolated. Requires a plan token bound to these exact arguments. Class X."
+    )]
+    fn hv_guest_powershell(
+        &self,
+        Parameters(args): Parameters<GuestPowershellArgs>,
+    ) -> Result<Json<GuestExecResult>, rmcp::ErrorData> {
+        let mut session =
+            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(60));
+        let out = session
+            .powershell_with_timeout(&args.script, timeout)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(GuestExecResult {
+            exit_code: i64::from(out.exit_code),
+            stdout: out.stdout_text(),
+            stderr: out.stderr_text(),
+        }))
+    }
+
+    /// `hv_dump_find`.
+    #[tool(
+        description = "Find crash dumps in the standard roots (C:\\Windows\\MEMORY.DMP, Minidump, %LOCALAPPDATA%\\CrashDumps), newest first, with an explicit count of what was skipped."
+    )]
+    #[allow(clippy::unnecessary_wraps, reason = "rmcp tool fns all return Result")]
+    fn hv_dump_find(
+        &self,
+        Parameters(args): Parameters<DumpFindArgs>,
+    ) -> Result<Json<DumpFindResult>, rmcp::ErrorData> {
+        let found = hvlab_debug::find_dumps(
+            &hvlab_debug::default_roots(),
+            usize::try_from(args.limit.unwrap_or(25)).unwrap_or(25),
+        );
+        Ok(Json(DumpFindResult {
+            dumps: found
+                .dumps
+                .into_iter()
+                .map(|d| DumpEntry {
+                    path: d.path.display().to_string(),
+                    size_bytes: d.size_bytes,
+                    modified: d.modified.map(format_rfc3339),
+                })
+                .collect(),
+            skipped_by_limit: found.skipped_by_limit as u64,
+            unreadable_roots: found.unreadable_roots,
+        }))
+    }
+
+    /// `hv_dump_analyze`.
+    #[tool(
+        description = "Run cdb !analyze -v, kv, lm against a dump and return structured fields (bugcheck, module, bucket, stack) plus the bounded raw log. Slower than hv_dump_inspect; results are cached on disk keyed by the dump fingerprint."
+    )]
+    fn hv_dump_analyze(
+        &self,
+        Parameters(args): Parameters<DumpAnalyzeArgs>,
+    ) -> Result<Json<DumpAnalyzeResult>, rmcp::ErrorData> {
+        let path = std::path::PathBuf::from(&args.path);
+        let cache_dir = hvlab_debug::default_cache_dir();
+        let (analysis, cached) = hvlab_debug::analyze_cached(
+            &path,
+            &hvlab_debug::AnalyzeOptions::default(),
+            &cache_dir,
+            hvlab_debug::default_ttl(),
+        )
+        .map_err(|e| mcp_err(&e))?;
+        let p = &analysis.parsed;
+        Ok(Json(DumpAnalyzeResult {
+            bugcheck_code: p.bugcheck_code.map(hvlab_dump::format_bugcheck_code),
+            module_name: p.module_name.clone(),
+            image_name: p.image_name.clone(),
+            failure_bucket_id: p.failure_bucket_id.clone(),
+            process_name: p.process_name.clone(),
+            stack: p
+                .stack_frames
+                .iter()
+                .map(|f| match &f.ret_addr {
+                    Some(addr) => format!("{} {} {}", f.number, addr, f.symbol),
+                    None => format!("{} {}", f.number, f.symbol),
+                })
+                .collect(),
+            truncated: analysis.truncation.truncated,
+            dropped_bytes: analysis.truncation.dropped_bytes as u64,
+            cached,
+            raw_log: analysis.raw_log,
+        }))
+    }
+
+    /// `hv_capabilities`.
+    #[tool(
+        description = "Static server info: version, protocol, registered tool count, and whether the Hyper-V WMI namespace answers."
+    )]
+    #[allow(clippy::unnecessary_wraps, reason = "rmcp tool fns all return Result")]
+    fn hv_capabilities(&self) -> Result<Json<CapabilitiesResult>, rmcp::ErrorData> {
+        // `vmms` state is the project's designated liveness probe (never
+        // UAC-filtered); an inventory query can be filtered to empty and
+        // would make a filtered host look like "Hyper-V absent".
+        let hyper_v_present = hvlab_host::HostService::connect()
+            .and_then(|s| s.host_services())
+            .is_ok_and(|svcs| {
+                svcs.iter()
+                    .any(|s| s.name == "vmms" && s.state == "Running")
+            });
+        Ok(Json(CapabilitiesResult {
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            protocol_version: rmcp::model::ProtocolVersion::V_2025_03_26.to_string(),
+            tool_count: Self::tool_router().list_all().len() as u64,
+            hyper_v_present,
+        }))
+    }
+
+    /// `hv_tools_list`.
+    #[tool(
+        description = "List every registered tool with its safety class (R read-only, M mutating, D destructive, X guest code execution)."
+    )]
+    #[allow(clippy::unnecessary_wraps, reason = "rmcp tool fns all return Result")]
+    fn hv_tools_list(&self) -> Result<Json<ToolListResult>, rmcp::ErrorData> {
+        let mut tools: Vec<ToolEntry> = Self::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| ToolEntry {
+                class: Self::tool_class(&t.name).to_owned(),
+                name: t.name.into_owned(),
+            })
+            .collect();
+        tools.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(Json(ToolListResult { tools }))
+    }
 }
 
 /// Project a host checkpoint into the wire shape.
@@ -217,6 +1058,62 @@ fn entry(cp: hvlab_host::Checkpoint) -> CheckpointEntry {
         parent: cp.parent,
         automatic: cp.automatic,
     }
+}
+
+/// Parse a user-facing state name into its `EnabledState` value.
+fn parse_state(name: &str) -> Option<u16> {
+    match name.to_ascii_lowercase().as_str() {
+        "off" | "enabled" => Some(3),
+        "running" => Some(2),
+        "paused" => Some(6),
+        "saved" => Some(12),
+        _ => None,
+    }
+}
+
+/// Project a storage inspection result into the wire shape.
+fn vhd_info(path: &str, disk: &hvlab_host::DiskInfo) -> VhdInfoResult {
+    VhdInfoResult {
+        path: path.to_owned(),
+        format: format_disk(disk.format),
+        size_bytes: disk.max_internal_size,
+        file_size_bytes: disk.file_size,
+        block_size: disk.block_size.map(u64::from),
+        parent_path: disk.parent.clone(),
+    }
+}
+
+/// Decode the numeric `Format` of `Msvm_VirtualHardDiskSettingData`.
+fn format_disk(format: u16) -> String {
+    match format {
+        2 => "vhd".to_owned(),
+        3 => "vhdx".to_owned(),
+        4 => "vhdx-set".to_owned(),
+        other => format!("unknown({other})"),
+    }
+}
+
+/// Project a backend config diff into the wire shape.
+fn diff_entry(d: hvlab_host::ConfigDiff) -> ConfigDiff {
+    ConfigDiff {
+        field: d.field,
+        before: d.before,
+        after: d.after,
+    }
+}
+
+/// RFC 3339 for a system time, falling back to epoch seconds.
+fn format_rfc3339(t: SystemTime) -> String {
+    time::OffsetDateTime::from_unix_timestamp(
+        t.duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs().cast_signed()),
+    )
+    .ok()
+    .and_then(|dt| {
+        dt.format(&time::format_description::well_known::Rfc3339)
+            .ok()
+    })
+    .unwrap_or_else(|| "1970-01-01T00:00:00Z".to_owned())
 }
 
 /// Resolve a VM argument (GUID or display name) to its id.
@@ -249,6 +1146,34 @@ fn resolve_vm(
 
 #[tool_handler]
 impl rmcp::ServerHandler for HvlabServer {
+    /// Authorize plan-gated tools from the client's *raw* arguments
+    /// before the router runs them.
+    ///
+    /// Doing this here — rather than inside each tool body — means the
+    /// digest covers exactly the JSON the client sent, which is the same
+    /// JSON `hv_plan` hashed. A tool body only ever sees arguments that
+    /// already passed the gate.
+    fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::CallToolResponse, rmcp::ErrorData>> + '_ {
+        let name = request.name.clone();
+        let arguments = request.arguments.clone();
+        // Gate plan-gated tools from the raw JSON before dispatch. The
+        // authorization runs synchronously so the returned future is
+        // `Send` on this feature set.
+        let gate = plans::is_plan_gated(name.as_ref())
+            .then(|| self.authorize_call(name.as_ref(), arguments));
+        async move {
+            if let Some(result) = gate {
+                result?;
+            }
+            let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+            Self::tool_router().call(tcc).await
+        }
+    }
+
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         info.server_info.name = "hvlab".into();
@@ -259,5 +1184,190 @@ impl rmcp::ServerHandler for HvlabServer {
                 .into(),
         );
         info
+    }
+}
+
+#[cfg(test)]
+mod conformance {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    #[test]
+    fn registry_count_is_exact_and_names_match() {
+        // H-53: an exact count plus the full name set. A count that can
+        // only ratchet up tells you nothing; this fails when a tool is
+        // accidentally added, removed, or renamed.
+        const EXPECTED: &[&str] = &[
+            "hv_capabilities",
+            "hv_checkpoint_create",
+            "hv_checkpoint_delete",
+            "hv_checkpoint_list",
+            "hv_checkpoint_restore",
+            "hv_device_add_disk",
+            "hv_device_remove_disk",
+            "hv_dump_analyze",
+            "hv_dump_find",
+            "hv_dump_inspect",
+            "hv_guest_exec",
+            "hv_guest_ping",
+            "hv_guest_powershell",
+            "hv_host_default_switch",
+            "hv_host_info",
+            "hv_host_services",
+            "hv_host_storage_roots",
+            "hv_nic_connect",
+            "hv_nic_disconnect",
+            "hv_plan",
+            "hv_switch_create",
+            "hv_switch_list",
+            "hv_switch_remove",
+            "hv_tools_list",
+            "hv_vhd_compact",
+            "hv_vhd_create",
+            "hv_vhd_get",
+            "hv_vhd_inspect",
+            "hv_vhd_resize",
+            "hv_vm_get",
+            "hv_vm_get_config",
+            "hv_vm_list",
+            "hv_vm_rename",
+            "hv_vm_restart",
+            "hv_vm_set_memory",
+            "hv_vm_set_notes",
+            "hv_vm_set_processor",
+            "hv_vm_start",
+            "hv_vm_stop",
+            "hv_vm_wait_state",
+        ];
+        let mut names: Vec<String> = HvlabServer::tool_router()
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.into_owned())
+            .collect();
+        names.sort();
+        let mut expected: Vec<&str> = EXPECTED.to_vec();
+        expected.sort_unstable();
+        assert_eq!(
+            names, expected,
+            "tool registry changed; update EXPECTED deliberately"
+        );
+    }
+
+    #[test]
+    fn every_tool_has_a_description() {
+        for t in HvlabServer::tool_router().list_all() {
+            let d = t.description.as_ref().unwrap_or_else(|| {
+                panic!("tool {} has no description", t.name);
+            });
+            assert!(
+                !d.trim().is_empty(),
+                "tool {} has an empty description",
+                t.name
+            );
+        }
+    }
+
+    #[test]
+    fn classes_are_assigned() {
+        assert_eq!(HvlabServer::tool_class("hv_checkpoint_delete"), "D");
+        assert_eq!(HvlabServer::tool_class("hv_checkpoint_restore"), "D");
+        assert_eq!(HvlabServer::tool_class("hv_guest_exec"), "X");
+        assert_eq!(HvlabServer::tool_class("hv_guest_powershell"), "X");
+        assert_eq!(HvlabServer::tool_class("hv_vm_list"), "R");
+    }
+
+    #[test]
+    fn plan_gated_tools_reject_missing_confirm() {
+        // Mirrors the tool impls: a D/X call without a confirm arg must
+        // be refused before any backend call happens.
+        let server = HvlabServer::new();
+        let err = server
+            .authorize_args(
+                "hv_checkpoint_delete",
+                serde_json::json!({
+                    "vm": "x", "checkpoint": "c"
+                }),
+            )
+            .expect_err("missing confirm must be refused");
+        assert!(err.message.contains("plan token"), "{err:?}");
+    }
+
+    #[test]
+    fn mint_verify_consume_roundtrip_through_authorize() {
+        let server = HvlabServer::new();
+        let call_args = serde_json::json!({"vm": "x", "checkpoint": "c"});
+        let (_, confirm) = server
+            .lock_plans()
+            .mint("hv_checkpoint_delete", &call_args)
+            .expect("mint");
+        // The authorize path strips confirm, digests the rest, and must
+        // accept the minted token for the same args.
+        server
+            .authorize_args(
+                "hv_checkpoint_delete",
+                serde_json::json!({"vm": "x", "checkpoint": "c",
+                    "confirm": {"plan_id": confirm.plan_id, "digest": confirm.digest}}),
+            )
+            .expect("authorized");
+        // Single-use: second call with the same token is refused.
+        let err = server
+            .authorize_args(
+                "hv_checkpoint_delete",
+                serde_json::json!({"vm": "x", "checkpoint": "c",
+                    "confirm": {"plan_id": confirm.plan_id, "digest": confirm.digest}}),
+            )
+            .expect_err("reused token");
+        assert!(err.message.contains("consumed"), "{err:?}");
+    }
+
+    #[test]
+    fn token_bound_to_args_h30() {
+        let server = HvlabServer::new();
+        let (_, confirm) = server
+            .lock_plans()
+            .mint(
+                "hv_guest_exec",
+                &serde_json::json!({"vm": "a", "program": "cmd.exe", "argv": []}),
+            )
+            .expect("mint");
+        // Same token, different args: refused, token NOT consumed
+        // (digest check precedes consumption).
+        let err = server
+            .authorize_args(
+                "hv_guest_exec",
+                serde_json::json!({"vm": "b", "program": "cmd.exe", "argv": [],
+                    "confirm": {"plan_id": confirm.plan_id, "digest": confirm.digest}}),
+            )
+            .expect_err("wrong args");
+        assert!(err.message.contains("does not match"), "{err:?}");
+    }
+
+    #[test]
+    fn hv_plan_tool_rejects_non_gated_action() {
+        let server = HvlabServer::new();
+        let err = server
+            .lock_plans()
+            .mint("hv_vm_list", &serde_json::json!({}))
+            .expect_err("R tools need no plan");
+        assert_eq!(err.code, hvlab_core::ErrorCode::InvalidArgument);
+    }
+
+    #[test]
+    fn expired_token_is_refused() {
+        let server = HvlabServer::new();
+        let call_args = serde_json::json!({"vm": "x", "checkpoint": "c"});
+        let (_, confirm) = server
+            .lock_plans()
+            .mint("hv_checkpoint_restore", &call_args)
+            .expect("mint");
+        server.lock_plans().expire_for_test(&confirm.plan_id);
+        let err = server
+            .authorize_args(
+                "hv_checkpoint_restore",
+                serde_json::json!({"vm": "x", "checkpoint": "c",
+                    "confirm": {"plan_id": confirm.plan_id, "digest": confirm.digest}}),
+            )
+            .expect_err("expired");
+        assert!(err.message.contains("expired"), "{err:?}");
     }
 }

@@ -1,0 +1,32 @@
+This is a synthetic user-mode minidump report used to exercise the
+user-mode branch of the parser. No real crash data.
+
+Loading Dump File [C:\dumps\app.exe.4242.dmp]
+User Mini Dump File: Only registers, stack and portions of memory are available
+
+Symbol search path is: srv*C:\symbols
+Windows 10 Version 26200 MP (12 procs) Free x64
+
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr
+
+EXCEPTION_CODE: (NTSTATUS) 0xc0000409 - The system detected an overrun of a stack-based buffer
+
+FAULTING_IP: 
+app!Parse+0x2a8
+00007ff7`29678aa1 cd29            int     29h
+
+EXCEPTION_CODE_STR:  c0000409
+
+MODULE_NAME: app
+
+IMAGE_NAME:  app.exe
+
+FAILURE_BUCKET_ID:  FAIL_FAST_FATAL_APP_EXIT_c0000409_app.exe!Parse
+
+PROCESS_NAME:  app.exe
+
+STACK_TEXT:  
+00000000`0015a8e0 00000000`0015a8e8 : app!Parse+0x2a8
+00000000`0015a8e8 00000000`0015a940 : app!main+0x40
+00000000`0015a940 00007ffb`1a2e7374 : kernel32!BaseThreadInitThunk+0x14

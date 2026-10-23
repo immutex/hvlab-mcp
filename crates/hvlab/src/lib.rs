@@ -22,6 +22,7 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
     match command.as_str() {
         "dump" => cli::dump(&args[1..]),
         "mcp" => tokio_main(hvlab_mcp::HvlabServer::new().serve_stdio()),
+        "tools" => cli::tools(),
         "doctor" => {
             eprintln!("hvlab doctor: not yet implemented (milestone M2)");
             std::process::ExitCode::from(2)
@@ -70,6 +71,7 @@ USAGE:
 
 COMMANDS:
     dump inspect <file>   print bugcheck and header fields from a crash dump (< 5 ms)
+    tools                 list registered MCP tools with safety classes
     mcp                   run the MCP server (stdio)
     doctor                probe environment capabilities [M2]
     version               print version"

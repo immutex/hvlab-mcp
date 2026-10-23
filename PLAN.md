@@ -442,6 +442,18 @@ Profile membership is declared per tool in the registry (`profiles: &["core"]`),
 
 ## 5. Tool catalogue
 
+> **Status:** this catalogue is the full v1.0 design target (200 tools).
+> The shipped server registers **40** of them: all of §5.2 host facts
+> (minus policy), §5.3 VM lifecycle and §5.4 configuration subsets,
+> §5.5 storage, §5.6 switch/NIC basics, §5.7 checkpoints, five of §5.8
+> guest execution, §5.11 dump inspect/find/analyze, and meta
+> capabilities/plan/tools-list. Guest inspection (§5.9), console and
+> serial (§5.10), live kernel debugging (§5.12), orchestration (§5.13),
+> artifacts (§5.14), and recipes (§5.15) are **not implemented**, and
+> the `policy` layer of §7.1 is not built (destructive calls are gated
+> by plan tokens only). Per-group counts below describe the target, not
+> the current build; run `hvlab tools` for the live list.
+
 Safety classes: **R** read-only · **M** mutating, reversible · **D** destructive, needs a plan token · **X** arbitrary code execution in guest, needs a plan token and `policy.mode = "admin"`.
 
 ### 5.1 Meta / diagnostics (12)
@@ -979,6 +991,17 @@ hvlab/
 ---
 
 ## 14. Milestones
+
+> **Shipped status:** M0, M1, M2 are done. M3 is done for the host-fact,
+> lifecycle, configuration, storage, networking, checkpoint, and device
+> surfaces it lists (every registered tool is exercised by a test, with
+> host-mutating tests opt-in). M5's dump-analysis half is done via the
+> `cdb` debugger rather than DbgEng. M4 is done for the PS Direct channel
+> only (no SSH, no serial, no session pool). **M6 (live kernel
+> debugging), M7 (orchestration/soak/watchdog/recipes/artifacts), M8
+> (HTTP transport, Tasks, metrics, docs generation), and M9 (hardening,
+> packaging) are not implemented.** The `policy`/config-file layer of
+> §7–§8 is not built; plans and classes are hardcoded.
 
 Each milestone produces a runnable artifact with its own tests. No stubs.
 

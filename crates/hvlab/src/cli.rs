@@ -87,3 +87,36 @@ fn dump_inspect(path: Option<&str>) -> std::process::ExitCode {
     let _ = lock.write_all(out.as_bytes());
     std::process::ExitCode::SUCCESS
 }
+
+/// `hvlab tools`: list registered MCP tools with their safety classes.
+#[must_use]
+pub fn tools() -> std::process::ExitCode {
+    let router = hvlab_mcp::HvlabServer::router();
+    let mut tools: Vec<(String, String, String)> = router
+        .list_all()
+        .into_iter()
+        .map(|t| {
+            let name = t.name.into_owned();
+            let class = hvlab_mcp::HvlabServer::tool_class(&name).to_owned();
+            let desc = t
+                .description
+                .map(std::borrow::Cow::into_owned)
+                .unwrap_or_default();
+            (name, class, desc)
+        })
+        .collect();
+    tools.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut out = String::new();
+    for (name, class, desc) in &tools {
+        let _ = writeln!(out, "{class}  {name}  {desc}");
+    }
+    let _ = write!(
+        out,
+        "\n{} tools; classes: R read-only, M mutating, D destructive (plan token), X guest code execution (plan token)\n",
+        tools.len()
+    );
+    let stdout = std::io::stdout();
+    let mut lock = stdout.lock();
+    let _ = lock.write_all(out.as_bytes());
+    std::process::ExitCode::SUCCESS
+}

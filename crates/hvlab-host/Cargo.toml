@@ -14,8 +14,6 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 wmi = "0.18.4"
 
-[dev-dependencies]
-tokio = { workspace = true }
 
 [lints]
 workspace = true

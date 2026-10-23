@@ -133,34 +133,6 @@ fn poll_once(conn: &WMIConnection, job_path: &str) -> Poll {
     }
 }
 
-/// Percent complete from a live job, for progress reporting.
-///
-/// # Errors
-///
-/// `ErrorCode::Transport` on WMI failure.
-pub fn job_percent(conn: &WMIConnection, job_path: &str) -> Result<Option<u16>> {
-    #[derive(serde::Deserialize)]
-    #[serde(rename = "Msvm_ConcreteJob")]
-    struct Pct {
-        #[serde(rename = "PercentComplete", default)]
-        percent_complete: Option<u16>,
-    }
-    let query = format!("SELECT PercentComplete FROM {job_path}");
-    let rows: Vec<Pct> = conn
-        .raw_query(&query)
-        .map_err(|e| HvError::new(ErrorCode::Transport, format!("job poll failed: {e}")))?;
-    Ok(rows.first().and_then(|j| j.percent_complete))
-}
-
-/// Errors specific to job interpretation.
-#[derive(Debug, thiserror::Error)]
-#[non_exhaustive]
-pub enum WmiJobError {
-    /// The job path WMI returned was empty.
-    #[error("job path was empty; the operation may not have started")]
-    EmptyJobPath,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

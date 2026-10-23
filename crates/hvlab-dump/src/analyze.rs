@@ -14,7 +14,7 @@ type Line<'a> = &'a str;
 ///
 /// Every field is `Option`: the parser reports what it found, never
 /// what it assumed. A field being absent is information.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ParsedAnalyze {
     /// `BUGCHECK_CODE` from the analysis summary.
     pub bugcheck_code: Option<u32>,
@@ -43,7 +43,7 @@ pub struct ParsedAnalyze {
 }
 
 /// One stack frame from `STACK_TEXT`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct StackFrame {
     /// Frame number as printed (`00`, `01`, …).
     pub number: String,
@@ -58,7 +58,7 @@ pub struct StackFrame {
 }
 
 /// One module from a module listing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ModuleInfo {
     /// Module name, e.g. `nt` or `mydriver`.
     pub name: String,

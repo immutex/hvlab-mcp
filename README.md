@@ -7,16 +7,29 @@ Rust implementation of the [PLAN.md](PLAN.md) design. Workspace layout:
 | `crates/hvlab-dump` | `DUMP_HEADER64` fast-path parsing, `!analyze -v` text parser, bugcheck catalog | **M0 — done** |
 | `crates/hvlab-core` | ids, error taxonomy, plan tokens, VM state | **M0 — done** |
 | `crates/hvlab` | binary: `hvlab dump inspect`, CLI dispatch | **M0 — done** |
-| `crates/hvlab-host` | WMI v2 management plane | M1 |
-| `crates/hvlab-guest` | PS Direct / SSH / serial channels | M4 |
-| `crates/hvlab-debug` | DbgEng: dumps + live KD | M5–M6 |
-| `crates/hvlab-mcp` | MCP server (rmcp) | M2 |
+| `crates/hvlab-host` | WMI v2 management plane: VM lifecycle, config, checkpoints, storage, networking, devices, host facts | **done** |
+| `crates/hvlab-guest` | PowerShell Direct channel: framed protocol, path policy, identity nonce, SHA-256 transfers | **done** (PS Direct; SSH/serial not implemented) |
+| `crates/hvlab-debug` | crash-dump analysis via the `cdb` debugger: `!analyze -v`, `kv`, `lm`, disk cache, dump discovery | **done** (dumps only; live KD not implemented) |
+| `crates/hvlab-mcp` | MCP server (rmcp): 40 tools over stdio, plan tokens for destructive calls | **done** |
+
+`hvlab` ships 40 of the 200 tools described in [PLAN.md](PLAN.md) §5. The
+sections for guest inspection, console/serial, live kernel debugging,
+orchestration, artifacts, and recipes are **design targets, not
+implemented**.
 
 ## Quick start
 
 ```powershell
 cargo build --release
+
+# Inspect a crash dump (fast path, no debugger needed)
 ./target/release/hvlab.exe dump inspect C:\Windows\MEMORY.DMP
+
+# Run the MCP server over stdio (for an agent or MCP client)
+./target/release/hvlab.exe mcp
+
+# List every registered tool and its safety class
+./target/release/hvlab.exe tools
 ```
 
 Parses the crash header and prints the bugcheck in ~20 ms, no debugger

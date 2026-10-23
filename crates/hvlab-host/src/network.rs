@@ -371,24 +371,30 @@ impl NetworkService {
         adapter_name: Option<&str>,
         timeout_secs: u64,
     ) -> Result<Switch> {
+        // Enforced here, not only at the MCP layer: binding a physical
+        // NIC reroutes the host's traffic through the vSwitch and can
+        // take the machine offline. Nothing in hvlab has a legitimate
+        // reason to do it, so the backend refuses it outright
+        // (`SwitchKind::External` remains for `list_switches`
+        // classification only).
+        if kind == SwitchKind::External {
+            return Err(HvError::new(
+                ErrorCode::PolicyDenied,
+                "creating an external switch would bind a physical adapter and can take the host's network offline; hvlab does not offer it",
+            ));
+        }
         let resources = match kind {
             SwitchKind::Private => Vec::new(),
             SwitchKind::Internal => vec![connection_xml(name, &self.host_path()?)],
-            SwitchKind::External => {
-                let adapter = adapter_name.ok_or_else(|| {
-                    HvError::new(
-                        ErrorCode::InvalidArgument,
-                        "an external switch needs the name of a physical adapter",
-                    )
-                })?;
-                let path = self.external_port_path(adapter)?;
-                vec![connection_xml(name, &path)]
-            }
+            // Unreachable: the External guard above returned
+            // `PolicyDenied` before the match. Enum exhaustiveness keeps
+            // a future kind honest.
+            SwitchKind::External => unreachable!("guarded above"),
         };
-        if kind != SwitchKind::External && adapter_name.is_some() {
+        if adapter_name.is_some() {
             return Err(HvError::new(
                 ErrorCode::InvalidArgument,
-                "only an external switch binds a physical adapter",
+                "no hvlab switch kind binds a physical adapter",
             ));
         }
 
@@ -586,25 +592,6 @@ impl NetworkService {
             .next()
             .map(|r| r.path)
             .ok_or_else(|| HvError::new(ErrorCode::Unsupported, "host computer system not found"))
-    }
-
-    /// Object path of a physical adapter.
-    fn external_port_path(&self, adapter_name: &str) -> Result<String> {
-        #[derive(Debug, Deserialize)]
-        #[serde(rename = "Msvm_ExternalEthernetPort")]
-        struct Raw {
-            #[serde(rename = "__PATH")]
-            path: String,
-        }
-        let query = format!(
-            "SELECT * FROM Msvm_ExternalEthernetPort WHERE ElementName = '{}'",
-            escape_wql(adapter_name)
-        );
-        let rows: Vec<Raw> = self.conn.raw_query(&query).map_err(|e| wmi_err(&e))?;
-        rows.into_iter()
-            .next()
-            .map(|r| r.path)
-            .ok_or_else(|| HvError::not_found("physical adapter", adapter_name))
     }
 
     /// Object path of a switch's `Msvm_VirtualEthernetSwitch` instance.

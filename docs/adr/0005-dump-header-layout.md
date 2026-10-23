@@ -34,8 +34,11 @@ was placed at `0x28` (that is `PsActiveProcessHead`); the real offset is
 
 ## Consequences
 
-- A synthetic fixture alone cannot validate offsets; the regression
-  suite must keep at least one real-dump byte comparison (the two
-  fixture dumps in `tests/`).
+- A synthetic fixture alone cannot validate offsets; the offset table
+  is cross-checked against `kdmp-parser`'s `Header64` in
+  `crates/hvlab-dump/src/tests.rs`, and a real-dump byte comparison
+  runs when `HVLAB_TEST_DUMP_PATH` points at one (host-dependent, so it
+  is opt-in rather than a checked-in fixture — crash dumps contain the
+  host's memory and do not belong in a repository).
 - New upstream dump types surface as `DumpKind::Unknown(n)` and are
   reported verbatim, never guessed into a real kind.
