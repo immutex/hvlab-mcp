@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/hvlab", "crates/hvlab-core", "crates/hvlab-dump"]
+members = [
+    "crates/hvlab",
+    "crates/hvlab-core",
+    "crates/hvlab-dump",
+    "crates/hvlab-host",
+    "crates/hvlab-mcp",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,8 +19,11 @@ description = "Hyper-V control plane for agents and humans: MCP server + CLI"
 [workspace.dependencies]
 hvlab-core = { path = "crates/hvlab-core", version = "0.1.0" }
 hvlab-dump = { path = "crates/hvlab-dump", version = "0.1.0" }
+hvlab-host = { path = "crates/hvlab-host", version = "0.1.0" }
 
 anyhow = "1.0.104"
+rmcp = { version = "3.7", features = ["server", "macros", "schemars", "transport-io"] }
+tokio-util = { version = "0.7.20", features = ["rt"] }
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "string"] }
 figment = { version = "0.10.19", features = ["toml", "env"] }

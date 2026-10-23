@@ -1,0 +1,21 @@
+[package]
+name = "hvlab-host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hyper-V WMI v2 management plane for hvlab"
+
+[dependencies]
+hvlab-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+wmi = "0.18.4"
+
+[dev-dependencies]
+tokio = { workspace = true }
+
+[lints]
+workspace = true

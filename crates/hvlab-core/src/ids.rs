@@ -19,6 +19,16 @@ macro_rules! id_type {
             pub fn generate() -> Self {
                 Self(uuid::Uuid::now_v7())
             }
+
+            /// Build from an uppercase braced-or-plain GUID string, as
+            /// WMI returns them (e.g. `64A20E96-BA68-...`).
+            ///
+            /// # Errors
+            ///
+            /// uuid parse failure.
+            pub fn from_str_guid(s: &str) -> std::result::Result<Self, uuid::Error> {
+                Ok(Self(uuid::Uuid::parse_str(s)?))
+            }
         }
 
         impl fmt::Display for $name {

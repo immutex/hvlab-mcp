@@ -21,10 +21,7 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
 
     match command.as_str() {
         "dump" => cli::dump(&args[1..]),
-        "mcp" => {
-            eprintln!("hvlab mcp: not yet implemented (milestone M2)");
-            std::process::ExitCode::from(2)
-        }
+        "mcp" => tokio_main(hvlab_mcp::HvlabServer::new().serve_stdio()),
         "doctor" => {
             eprintln!("hvlab doctor: not yet implemented (milestone M2)");
             std::process::ExitCode::from(2)
@@ -45,6 +42,24 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
     }
 }
 
+/// Run `hvlab mcp`: block on the server future, mapping its error to an
+/// exit message.
+#[allow(clippy::expect_used)] // runtime startup; no meaningful recovery
+fn tokio_main(
+    fut: impl Future<Output = Result<(), Box<dyn std::error::Error + Send + Sync>>>,
+) -> std::process::ExitCode {
+    match tokio::runtime::Runtime::new()
+        .expect("tokio runtime")
+        .block_on(fut)
+    {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("hvlab mcp: {e}");
+            std::process::ExitCode::from(1)
+        }
+    }
+}
+
 /// Print the top-level usage text.
 pub fn print_usage() {
     println!(
@@ -55,7 +70,7 @@ USAGE:
 
 COMMANDS:
     dump inspect <file>   print bugcheck and header fields from a crash dump (< 5 ms)
-    mcp                   run the MCP server (stdio) [M2]
+    mcp                   run the MCP server (stdio)
     doctor                probe environment capabilities [M2]
     version               print version"
     );
