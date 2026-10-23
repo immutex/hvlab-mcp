@@ -162,7 +162,7 @@ impl VmService {
 
         let conn = self.connection()?;
         let query = format!(
-            "SELECT __PATH FROM Msvm_ComputerSystem WHERE Name = '{}' AND Caption = 'Virtual Machine'",
+            "SELECT * FROM Msvm_ComputerSystem WHERE Name = '{}' AND Caption = 'Virtual Machine'",
             id.0
         );
         let targets: Vec<Target> = conn.raw_query(&query).map_err(|e| wmi_err(&e))?;

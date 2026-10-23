@@ -14,7 +14,11 @@ use rmcp::{
 };
 
 pub mod tools;
-pub use tools::{DumpInspectArgs, DumpInspectResult, VmEntry, VmGetArgs, VmListArgs};
+pub use tools::{
+    CheckpointCreateArgs, CheckpointDeleteArgs, CheckpointEntry, CheckpointListArgs,
+    CheckpointMutationResult, CheckpointRestoreArgs, DumpInspectArgs, DumpInspectResult, VmEntry,
+    VmGetArgs, VmListArgs,
+};
 
 fn mcp_err(e: &HvError) -> rmcp::ErrorData {
     rmcp::ErrorData::internal_error(format!("{}: {}", e.code.as_str(), e.message), None)
@@ -118,6 +122,116 @@ impl HvlabServer {
             state: vm.state.to_string(),
         }))
     }
+
+    /// `hv_checkpoint_list`.
+    #[tool(description = "List a VM's checkpoints, newest first.")]
+    fn hv_checkpoint_list(
+        &self,
+        Parameters(args): Parameters<CheckpointListArgs>,
+    ) -> Result<Json<Vec<CheckpointEntry>>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let cps = hvlab_host::CheckpointService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .list(id)
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(cps.into_iter().map(entry).collect()))
+    }
+
+    /// `hv_checkpoint_create`.
+    #[tool(
+        description = "Take a checkpoint of a VM and name it. Kinds: standard (memory + disk), production (VSS, disk only), disk_only. Waits for the job and returns the checkpoint as observed on the host."
+    )]
+    fn hv_checkpoint_create(
+        &self,
+        Parameters(args): Parameters<CheckpointCreateArgs>,
+    ) -> Result<Json<CheckpointMutationResult>, rmcp::ErrorData> {
+        let kind = match args.kind.as_deref() {
+            None => hvlab_host::CheckpointKind::Standard,
+            Some(k) => k.parse().map_err(|e| mcp_err(&e))?,
+        };
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        let cp = hvlab_host::CheckpointService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .create(id, &args.name, kind, args.timeout_secs.unwrap_or(300))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(CheckpointMutationResult {
+            action: "created".into(),
+            checkpoint: Some(entry(cp)),
+        }))
+    }
+
+    /// `hv_checkpoint_delete`.
+    #[tool(
+        description = "Delete a checkpoint. Set include_subtree to remove every checkpoint below it too."
+    )]
+    fn hv_checkpoint_delete(
+        &self,
+        Parameters(args): Parameters<CheckpointDeleteArgs>,
+    ) -> Result<Json<CheckpointMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::CheckpointService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .delete(
+                id,
+                &args.checkpoint,
+                args.include_subtree,
+                args.timeout_secs.unwrap_or(300),
+            )
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(CheckpointMutationResult {
+            action: "deleted".into(),
+            checkpoint: None,
+        }))
+    }
+
+    /// `hv_checkpoint_restore`.
+    #[tool(
+        description = "Restore a checkpoint, discarding all state after it. Destructive: the VM is reverted."
+    )]
+    fn hv_checkpoint_restore(
+        &self,
+        Parameters(args): Parameters<CheckpointRestoreArgs>,
+    ) -> Result<Json<CheckpointMutationResult>, rmcp::ErrorData> {
+        let svc = hvlab_host::VmService::connect().map_err(|e| mcp_err(&e))?;
+        let id = resolve_vm_id(&svc, &args.vm).map_err(|e| mcp_err(&e))?;
+        hvlab_host::CheckpointService::connect()
+            .map_err(|e| mcp_err(&e))?
+            .restore(id, &args.checkpoint, args.timeout_secs.unwrap_or(600))
+            .map_err(|e| mcp_err(&e))?;
+        Ok(Json(CheckpointMutationResult {
+            action: "restored".into(),
+            checkpoint: None,
+        }))
+    }
+}
+
+/// Project a host checkpoint into the wire shape.
+fn entry(cp: hvlab_host::Checkpoint) -> CheckpointEntry {
+    CheckpointEntry {
+        id: cp.id,
+        name: cp.name,
+        created: cp.created,
+        parent: cp.parent,
+        automatic: cp.automatic,
+    }
+}
+
+/// Resolve a VM argument (GUID or display name) to its id.
+fn resolve_vm_id(
+    svc: &hvlab_host::VmService,
+    name_or_id: &str,
+) -> Result<hvlab_core::ids::VmId, HvError> {
+    if let Ok(id) = hvlab_core::ids::VmId::from_str_guid(name_or_id) {
+        return svc.get_vm(id).map(|v| v.id);
+    }
+    svc.list_vms()?
+        .into_iter()
+        .find(|v| v.name.eq_ignore_ascii_case(name_or_id))
+        .map(|v| v.id)
+        .ok_or_else(|| HvError::not_found("vm", name_or_id))
 }
 
 fn resolve_vm(

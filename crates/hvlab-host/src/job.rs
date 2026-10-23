@@ -30,12 +30,27 @@ pub enum JobOutcome {
     Vanished,
 }
 
+/// What one poll saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Poll {
+    /// The job exists and has not finished.
+    Running,
+    /// The job reached a terminal state.
+    Terminal(JobOutcome),
+    /// The job instance cannot be found.
+    Gone,
+}
+
 /// Poll `job_path` until it reaches a terminal state or `deadline`.
+///
+/// A job that is *missing* and a job that is *running* are different
+/// observations: only the former may be read as [`JobOutcome::Vanished`].
+/// Because a poll can race job creation, a missing job is re-checked for
+/// a short grace period before being believed.
 ///
 /// # Errors
 ///
-/// `ErrorCode::Timeout` when the deadline passes first, and
-/// `ErrorCode::Transport` on WMI failures mid-poll.
+/// `ErrorCode::Timeout` when the deadline passes first.
 pub fn await_wmi_job(
     conn: &WMIConnection,
     job_path: &str,
@@ -44,15 +59,22 @@ pub fn await_wmi_job(
     if job_path.is_empty() {
         return Ok(JobOutcome::Vanished);
     }
-    // A job that has never been seen is missing, not "running with a
-    // blip": require a brief grace period of misses before believing
-    // it is gone, so a poll racing job creation does not misreport.
-    let grace = Instant::now() + Duration::from_secs(1);
+    let mut gone_since: Option<Instant> = None;
     loop {
         match poll_once(conn, job_path) {
-            Some(outcome) => return Ok(outcome),
-            None if Instant::now() >= grace => return Ok(JobOutcome::Vanished),
-            None => {}
+            Poll::Terminal(outcome) => return Ok(outcome),
+            Poll::Running => gone_since = None,
+            Poll::Gone => {
+                // Jobs are removed ~5 minutes after completion, so a
+                // missing job usually means "already finished and
+                // reaped". Require the absence to persist before
+                // trusting it, so a poll racing creation is not
+                // mistaken for a vanished job.
+                let since = *gone_since.get_or_insert_with(Instant::now);
+                if since.elapsed() >= VANISH_GRACE {
+                    return Ok(JobOutcome::Vanished);
+                }
+            }
         }
         if Instant::now() >= deadline {
             return Err(HvError::new(
@@ -60,13 +82,18 @@ pub fn await_wmi_job(
                 format!("job at {job_path} did not reach a terminal state before the deadline"),
             ));
         }
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(POLL_INTERVAL);
     }
 }
 
-/// One poll: `Some(outcome)` when terminal, `None` when the job is gone
-/// or unqueryable.
-fn poll_once(conn: &WMIConnection, job_path: &str) -> Option<JobOutcome> {
+/// How long a missing job must stay missing before it is called vanished.
+const VANISH_GRACE: Duration = Duration::from_secs(1);
+
+/// Poll cadence while a job runs.
+const POLL_INTERVAL: Duration = Duration::from_millis(200);
+
+/// One poll of a job's state.
+fn poll_once(conn: &WMIConnection, job_path: &str) -> Poll {
     #[derive(serde::Deserialize)]
     #[serde(rename = "Msvm_ConcreteJob")]
     struct StateOnly {
@@ -91,16 +118,18 @@ fn poll_once(conn: &WMIConnection, job_path: &str) -> Option<JobOutcome> {
     };
     let rows: Vec<StateOnly> = match conn.raw_query(&query) {
         Ok(rows) => rows,
-        Err(_) => return None, // query error == job gone
+        Err(_) => return Poll::Gone, // query error == job unqueryable
     };
-    let job = rows.first()?;
+    let Some(job) = rows.first() else {
+        return Poll::Gone;
+    };
     match job.job_state {
-        JOB_STATE_COMPLETED => Some(JobOutcome::Completed),
-        s if JOB_STATE_FAILED.contains(&s) => Some(JobOutcome::Failed(
+        JOB_STATE_COMPLETED => Poll::Terminal(JobOutcome::Completed),
+        s if JOB_STATE_FAILED.contains(&s) => Poll::Terminal(JobOutcome::Failed(
             job.error_code.unwrap_or(0),
             job.error_description.clone().unwrap_or_default(),
         )),
-        _ => None, // still running; caller sleeps and re-polls
+        _ => Poll::Running,
     }
 }
 
