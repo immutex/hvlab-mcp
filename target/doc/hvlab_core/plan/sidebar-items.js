@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"constant":["DEFAULT_PLAN_TTL"],"enum":["PlanError"],"fn":["build_plan","canonical_json"],"struct":["Plan","PlanStep"]};

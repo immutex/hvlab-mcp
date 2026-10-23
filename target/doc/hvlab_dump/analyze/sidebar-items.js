@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"enum":["ParseError"],"fn":["parse_analyze_report","parse_analyze_text","summarize"],"struct":["AnalyzeReport","ModuleInfo","ParsedAnalyze","StackFrame"]};
