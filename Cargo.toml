@@ -55,7 +55,7 @@ uuid = { version = "1.29.0", features = ["v4", "v7", "serde"] }
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"
-future-incompatible = { level = "warn", priority = -2 }
+future_incompatible = { level = "warn", priority = -2 }
 nonstandard_style = { level = "deny", priority = -1 }
 rust_2018_idioms = { level = "warn", priority = -2 }
 

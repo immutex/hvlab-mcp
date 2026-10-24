@@ -47,7 +47,7 @@ fn dump_inspect(path: Option<&str>) -> std::process::ExitCode {
     };
 
     let kind = hvlab_dump::DumpHeader64::read_kind(&header, path)
-        .map_or(hvlab_dump::DumpKind::Unknown(u32::MAX), |k| k);
+        .unwrap_or(hvlab_dump::DumpKind::Unknown(u32::MAX));
 
     let mut out = String::new();
     let info = hvlab_dump::bugcheck_name(header.bug_check_code);
