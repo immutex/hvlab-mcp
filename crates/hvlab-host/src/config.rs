@@ -484,7 +484,11 @@ mod tests {
     #[test]
     fn diff_of_is_empty_for_equal_values() {
         let v = serde_json::json!(5);
-        assert!(diff_of("x", &v, &v).is_empty());
+        let same = diff_of("x", &v, &v);
+        assert!(
+            same.is_empty(),
+            "equal values must produce no diff, got {same:?}"
+        );
         let d = diff_of("x", &serde_json::json!(5), &serde_json::json!(6));
         assert_eq!(d.len(), 1);
         assert_eq!(d[0].field, "x");

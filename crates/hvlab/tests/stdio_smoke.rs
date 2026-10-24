@@ -108,9 +108,15 @@ fn stdio_smoke() {
     );
     for t in tools {
         let name = t["name"].as_str().unwrap_or_default();
-        assert!(!name.is_empty(), "unnamed tool: {t}");
+        assert!(
+            name.starts_with("hv_"),
+            "tool names carry the hv_ prefix, got {name:?}"
+        );
         let desc = t["description"].as_str().unwrap_or_default();
-        assert!(!desc.trim().is_empty(), "tool {name} has no description");
+        assert!(
+            desc.contains(' ') && desc.trim().len() > 10,
+            "tool {name} needs a real one-line description, got {desc:?}"
+        );
         // The lean projection drops output schemas: they are half the
         // payload and no client needs them to choose a tool.
         assert!(

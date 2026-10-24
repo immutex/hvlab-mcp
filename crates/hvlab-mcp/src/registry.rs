@@ -319,7 +319,12 @@ mod tests {
         assert!(search("guest").iter().any(|m| m.name == "hv_guest_exec"));
         assert!(search("vhd").iter().any(|m| m.name == "hv_vhd_create"));
         assert_eq!(search("").len(), REGISTRY.len());
-        assert!(search("zzzz-no-match").is_empty());
+        let misses = search("zzzz-no-match");
+        assert!(
+            misses.is_empty(),
+            "a nonsense query must not match, got {:?}",
+            misses.iter().map(|m| m.name).collect::<Vec<_>>()
+        );
     }
 
     #[test]

@@ -294,7 +294,11 @@ mod tests {
         let text = "é".repeat(50); // 100 bytes
         let (log, t) = bound_log(&text, 99);
         assert!(t.truncated);
-        assert!(log.starts_with('é') || log.is_empty());
+        assert!(
+            log.starts_with('é') || log.is_empty(),
+            "truncation must not split the leading char, got {:?}",
+            log.chars().next()
+        );
         assert_eq!(log.chars().count(), 49);
     }
 

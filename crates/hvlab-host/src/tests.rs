@@ -81,9 +81,27 @@ fn service_or_skip() -> Option<VmService> {
 fn list_vms_returns_inventory_with_decoded_states() {
     let Some(svc) = service_or_skip() else { return };
     let vms = svc.list_vms().expect("list");
-    assert!(!vms.is_empty());
+    assert!(
+        !vms.is_empty(),
+        "a visible VM management service must list at least one VM"
+    );
+    // Plans are keyed by `VmId`, so two VMs sharing an id would let a
+    // cached plan retarget the wrong machine.
+    let mut ids: Vec<VmId> = vms.iter().map(|v| v.id).collect();
+    let total = ids.len();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        total,
+        "VM ids must be unique within an inventory"
+    );
     for vm in &vms {
-        assert!(!vm.name.is_empty());
+        assert!(
+            !vm.name.trim().is_empty(),
+            "VM {} has an empty display name",
+            vm.id
+        );
         // Decoded, not raw: every state must be a known variant or a
         // carried Unknown — never a default.
         let _ = vm.state.to_string();
@@ -147,7 +165,10 @@ fn host_info_reports_machine_facts() {
         return;
     };
     let info = svc.host_info().expect("host info");
-    assert!(!info.name.is_empty());
+    assert!(
+        !info.name.trim().is_empty(),
+        "the host must report a machine name"
+    );
     assert!(info.cpu_count > 0, "logical CPU count must be positive");
     assert!(info.ram_bytes > 0, "RAM must be positive");
     // The host itself is always enabled/running.
@@ -163,8 +184,14 @@ fn host_storage_roots_may_be_uac_filtered() {
     };
     match svc.host_storage_roots().expect("query") {
         Some(roots) => {
-            assert!(!roots.default_vhd_path.is_empty());
-            assert!(!roots.default_vm_path.is_empty());
+            assert!(
+                !roots.default_vhd_path.trim().is_empty(),
+                "VMMS reported storage roots, so the VHD path must be set"
+            );
+            assert!(
+                !roots.default_vm_path.trim().is_empty(),
+                "VMMS reported storage roots, so the VM path must be set"
+            );
         }
         None => eprintln!("storage roots not visible (not elevated?)"),
     }
@@ -179,7 +206,10 @@ fn host_default_switch_may_be_empty() {
     };
     let sw = svc.host_default_switch().expect("query");
     if let Some(name) = sw {
-        assert!(!name.is_empty());
+        assert!(
+            !name.trim().is_empty(),
+            "a reported switch must have a name"
+        );
     } else {
         eprintln!("no switches visible (not elevated or none exist)");
     }
@@ -198,8 +228,14 @@ fn host_services_lists_vmms() {
         .iter()
         .find(|s| s.name == "vmms")
         .expect("vmms must be present");
-    assert!(!vmms.state.is_empty());
-    assert!(!vmms.start_mode.is_empty());
+    assert!(
+        !vmms.state.trim().is_empty(),
+        "vmms must report a concrete state"
+    );
+    assert!(
+        !vmms.start_mode.trim().is_empty(),
+        "vmms must report a concrete start mode"
+    );
     // Integration services share the naming scheme; every listed one
     // must carry non-empty fields.
     for s in &services {
@@ -474,7 +510,11 @@ fn dvd_drives_enumerates_read_only() {
     let dev = DeviceService::connect().expect("connect");
     let drives = dev.dvd_drives(vms[0].id).expect("drives");
     for d in &drives {
-        assert!(!d.path.is_empty());
+        assert!(
+            d.path.contains(":\\"),
+            "a DVD drive path must be absolute, got {:?}",
+            d.path
+        );
     }
 }
 
@@ -548,7 +588,10 @@ fn checkpoint_round_trip() {
         .expect("create checkpoint");
     let _guard = CheckpointCleanup(&svc, vm, created.id.clone());
     assert_eq!(created.name, wanted, "provider naming is overridden");
-    assert!(!created.id.is_empty());
+    assert!(
+        !created.id.trim().is_empty(),
+        "a created checkpoint must have a ConfigurationID"
+    );
 
     let listed = svc.list(vm).expect("list checkpoints");
     assert!(
@@ -700,7 +743,10 @@ fn physical_adapter_inventory_is_read_only() {
     };
     let adapters = svc.physical_adapters().expect("list adapters");
     for a in &adapters {
-        assert!(!a.is_empty(), "adapter names must not be empty");
+        assert!(
+            a.chars().any(|c| c.is_ascii_alphanumeric()),
+            "an adapter name must identify hardware, got {a:?}"
+        );
     }
     // The classification query must run without touching the NIC stack.
     let switches = svc.list_switches().expect("list switches");

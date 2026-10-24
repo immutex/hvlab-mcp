@@ -23,16 +23,29 @@ jobs:
 
   test-hermetic:
     strategy:
+      # One platform failing must not cancel the other; the Windows leg is
+      # the one that actually gates the product.
+      fail-fast: false
       matrix:
-        os: [windows-latest, ubuntu-latest] # ubuntu proves the pure crates stay portable
+        include:
+          # Full workspace. Every crate here talks to WMI, PowerShell Direct,
+          # or cdb.exe, so this leg can only run on Windows.
+          - os: windows-latest
+            packages: ""
+          # Portability guard: hvlab-core and hvlab-dump are pure Rust (no
+          # `wmi`, no `windows-sys`, no platform APIs), so they must build
+          # and test anywhere. The rest of the workspace is Windows-only by
+          # construction and would fail here for reasons that are not bugs.
+          - os: ubuntu-latest
+            packages: "-p hvlab-core -p hvlab-dump"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo install cargo-nextest --locked
-      - run: cargo nextest run --all-features --locked
-      - run: cargo test --doc --locked
+      - run: cargo nextest run --all-features --locked ${{ matrix.packages }}
+      - run: cargo test --doc --locked ${{ matrix.packages }}
 
   deny:
     runs-on: ubuntu-latest

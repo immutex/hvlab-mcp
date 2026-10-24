@@ -281,7 +281,10 @@ fn sidecar_command_cannot_be_broken_out_of() {
     let cmd =
         sidecar::sidecar_command("it's; Remove-Whatever -Recurse -Force C:\\ ; $(Get-Process)");
     let quoted = cmd.rsplit('\'').nth(1).expect("quoted argument");
-    assert!(!quoted.is_empty());
+    assert!(
+        quoted.len() > 8,
+        "the encoded VM name must carry the real name, got {quoted:?}"
+    );
     assert!(
         quoted
             .bytes()
@@ -653,5 +656,8 @@ fn t2_real_guest_ping_when_enabled() {
         return;
     };
     let host = session.ping().expect("ping real guest");
-    assert!(!host.is_empty());
+    assert!(
+        !host.trim().is_empty() && host.chars().all(|c| !c.is_whitespace()),
+        "guest must report a concrete hostname, got {host:?}"
+    );
 }

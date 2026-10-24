@@ -156,7 +156,11 @@ mod tests {
         assert_eq!(res.skipped_by_limit, 1);
         assert_eq!(res.dumps[0].path.file_name().unwrap(), "new.dmp");
         assert_eq!(res.dumps[1].path.file_name().unwrap(), "mid.dmp");
-        assert!(res.unreadable_roots.is_empty());
+        assert!(
+            res.unreadable_roots.is_empty(),
+            "a readable root must not be reported unreadable: {:?}",
+            res.unreadable_roots
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -179,14 +183,22 @@ mod tests {
         let res = find_dumps(std::slice::from_ref(&p), 5);
         assert_eq!(res.dumps.len(), 1);
         assert_eq!(res.dumps[0].path, p);
-        assert!(res.unreadable_roots.is_empty());
+        assert!(
+            res.unreadable_roots.is_empty(),
+            "a file root is readable by construction, got {:?}",
+            res.unreadable_roots
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn unreadable_root_is_declared_not_fatal() {
         let res = find_dumps(&[PathBuf::from(r"C:\definitely-not-here-31337")], 5);
-        assert!(res.dumps.is_empty());
+        assert!(
+            res.dumps.is_empty(),
+            "a missing root cannot yield dumps, got {:?}",
+            res.dumps.iter().map(|d| &d.path).collect::<Vec<_>>()
+        );
         assert_eq!(res.unreadable_roots.len(), 1);
     }
 
@@ -194,7 +206,11 @@ mod tests {
     fn empty_roots_report_none_found() {
         let dir = temp_dir("empty");
         let res = find_dumps(&[dir], 5);
-        assert!(res.dumps.is_empty());
+        assert!(
+            res.dumps.is_empty(),
+            "an empty root cannot yield dumps, got {:?}",
+            res.dumps.iter().map(|d| &d.path).collect::<Vec<_>>()
+        );
         assert_eq!(res.skipped_by_limit, 0);
     }
 }

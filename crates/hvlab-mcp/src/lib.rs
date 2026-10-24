@@ -1427,8 +1427,8 @@ mod conformance {
             .collect();
 
         assert!(
-            !advertised.is_empty(),
-            "the core profile must advertise something"
+            advertised.iter().any(|t| t.name.starts_with("hv_")),
+            "the core profile must advertise at least one real tool"
         );
         let bytes: usize = advertised
             .iter()

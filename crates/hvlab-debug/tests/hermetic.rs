@@ -258,7 +258,11 @@ fn t2_real_dump_analysis() {
         ..hvlab_debug::AnalyzeOptions::default()
     };
     let analysis = analyze(&dump, &opts).expect("analysis succeeds");
-    assert!(!analysis.raw_log.is_empty());
+    assert!(
+        analysis.raw_log.contains("STACK_TEXT"),
+        "raw log must contain the !analyze sections, got {} bytes",
+        analysis.raw_log.len()
+    );
     // H-01: evidence, not exit code — the report must parse.
     assert!(analysis.parsed.bugcheck_code.is_some() || analysis.parsed.user_mode_dump);
 }

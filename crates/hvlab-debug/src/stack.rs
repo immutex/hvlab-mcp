@@ -191,7 +191,11 @@ MODULE_NAME: mydriver\n";
 
     #[test]
     fn missing_section_yields_empty() {
-        assert!(extract_stack("BUGCHECK_CODE: 9f\n").is_empty());
+        let frames = extract_stack("BUGCHECK_CODE: 9f\n");
+        assert!(
+            frames.is_empty(),
+            "a log without STACK_TEXT has no frames, got {frames:?}"
+        );
     }
 
     #[test]

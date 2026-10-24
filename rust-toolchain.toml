@@ -1,0 +1,11 @@
+# Pin the toolchain so a fresh clone builds with the same compiler as CI.
+# `rust-version` in Cargo.toml is the MSRV (1.88); this is what contributors
+# and CI actually build with.
+#
+# No `targets` entry on purpose: CI runs on both Windows and Ubuntu, and
+# pinning a target here would make the other platform download it needlessly.
+# The release workflow passes `--target` explicitly.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
