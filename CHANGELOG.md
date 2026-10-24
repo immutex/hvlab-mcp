@@ -11,7 +11,20 @@ releases do not.
 
 ## [Unreleased]
 
-Nothing yet.
+### Changed
+
+- `sha2` 0.10 → 0.11 (now on `hybrid-array`). Digest output is unchanged;
+  `sha256_hex_matches_published_vectors` pins the FIPS 180-4 known answers so a
+  future bump cannot silently alter plan-token digests.
+- CI actions moved to their node24 releases (`checkout` v7, `upload-artifact`
+  v7, `download-artifact` v8).
+- The Ubuntu CI leg runs `hvlab-core` and `hvlab-dump` only; the Windows leg
+  runs the full workspace.
+
+### Added
+
+- `sha256_hex_matches_published_vectors`, pinning FIPS 180-4 known answers
+  (246 tests on `main`).
 
 ## [0.1.0] — 2026-10-24
 
