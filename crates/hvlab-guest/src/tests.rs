@@ -560,6 +560,26 @@ fn oversized_transfer_is_refused_before_sending() {
     assert_eq!(err.code, ErrorCode::InvalidArgument);
 }
 
+#[test]
+fn sha256_hex_matches_published_vectors() {
+    // Known answers from FIPS 180-4. These pin the digest itself, not
+    // just self-consistency: plan tokens are SHA-256 over canonicalized
+    // arguments, so a hash implementation that changed its output would
+    // silently invalidate every token minted by an older build.
+    assert_eq!(
+        sha256_hex(b""),
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    );
+    assert_eq!(
+        sha256_hex(b"abc"),
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+    );
+    assert_eq!(
+        sha256_hex(b"abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
+        "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1"
+    );
+}
+
 #[cfg(windows)]
 #[test]
 fn put_and_get_verify_sha256() {
