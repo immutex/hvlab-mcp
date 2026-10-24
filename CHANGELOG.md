@@ -78,7 +78,8 @@ the Status section of the README).
 
 **Project**
 
-- 245 tests. CI runs the hermetic suite on Windows and Ubuntu, plus `clippy
+- 245 tests. CI runs the full suite on Windows, and the portable crates
+  (`hvlab-core`, `hvlab-dump`) on Ubuntu as a portability guard, plus `clippy
   -D warnings`, `rustfmt --check`, `cargo-deny`, and `cargo doc` with warnings
   denied.
 - No `unsafe` in library code; `unwrap`/`expect` denied outside tests.

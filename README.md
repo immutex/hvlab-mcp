@@ -235,7 +235,7 @@ cargo fmt --all -- --check
 cargo doc --no-deps --all-features
 ```
 
-245 tests. CI runs the hermetic suite on **both** `windows-latest` and `ubuntu-latest` — the Ubuntu job is what keeps the pure crates from growing a Windows dependency. `cargo-deny` checks advisories, licenses, and sources.
+245 tests. CI runs the full suite on `windows-latest` and, on `ubuntu-latest`, the two pure crates (`hvlab-core`, `hvlab-dump`) — that second leg is what keeps them from quietly growing a Windows dependency. `cargo-deny` checks advisories, licenses, and sources.
 
 Lints are strict on purpose: `unsafe_code = "deny"` workspace-wide (tests
 opt out only to set process environment variables), `unwrap_used` and
