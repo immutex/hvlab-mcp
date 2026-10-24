@@ -59,7 +59,7 @@ jobs:
             Out-File "$stage/hvlab.exe.sha256" -Encoding utf8
           Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: hvlab-${{ matrix.arch }}
           path: dist/*.zip
@@ -73,7 +73,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
