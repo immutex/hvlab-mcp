@@ -23,8 +23,10 @@ use rmcp::{
 };
 
 pub mod plans;
+pub mod profile;
+pub mod registry;
 pub mod tools;
-pub use plans::{PLAN_GATED_TOOLS, PlanConfirm, PlanMintResult, PlanStore};
+pub use plans::{PlanConfirm, PlanMintResult, PlanStore};
 pub use tools::{
     CheckpointCreateArgs, CheckpointDeleteArgs, CheckpointEntry, CheckpointListArgs,
     CheckpointMutationResult, CheckpointRestoreArgs, DumpInspectArgs, DumpInspectResult, VmEntry,
@@ -72,44 +74,48 @@ fn io_err(path: &str, e: &std::io::Error) -> HvError {
     HvError::new(ErrorCode::Transport, format!("io error on {path}: {e}"))
 }
 
-/// Tools that never mutate host, guest, or device state (class R).
-/// Everything not here and not plan-gated is class M.
-const READ_ONLY_TOOLS: &[&str] = &[
-    "hv_capabilities",
-    "hv_checkpoint_list",
-    "hv_dump_analyze",
-    "hv_dump_find",
-    "hv_dump_inspect",
-    "hv_guest_ping",
-    "hv_host_default_switch",
-    "hv_host_info",
-    "hv_host_services",
-    "hv_host_storage_roots",
-    "hv_plan",
-    "hv_switch_list",
-    "hv_tools_list",
-    "hv_vhd_get",
-    "hv_vhd_inspect",
-    "hv_vm_get",
-    "hv_vm_get_config",
-    "hv_vm_list",
-    "hv_vm_wait_state",
-];
-
 /// The assembled hvlab server. Holds the plan-token store so D/X
 /// authorizations survive across calls on the same server instance.
 #[derive(Clone)]
 pub struct HvlabServer {
     plans: std::sync::Arc<std::sync::Mutex<plans::PlanStore>>,
+    profile: profile::Profile,
 }
 
 impl HvlabServer {
-    /// Build the server.
+    /// Build the server with the `core` profile.
     #[must_use]
     pub fn new() -> Self {
+        Self::with_profile(profile::Profile::Core)
+    }
+
+    /// Build the server with an explicit advertisement profile.
+    ///
+    /// The profile only decides what `tools/list` advertises; every
+    /// registered tool stays callable by name under every profile.
+    #[must_use]
+    pub fn with_profile(profile: profile::Profile) -> Self {
         Self {
             plans: std::sync::Arc::new(std::sync::Mutex::new(plans::PlanStore::default())),
+            profile,
         }
+    }
+
+    /// The active advertisement profile.
+    #[must_use]
+    pub fn profile(&self) -> &profile::Profile {
+        &self.profile
+    }
+
+    /// Serve over stdio with the profile chosen by `HVLAB_TOOLS`.
+    ///
+    /// # Errors
+    ///
+    /// Transport or serve failures.
+    pub async fn serve_stdio_with_env_profile(
+        self,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.serve_stdio().await
     }
 
     /// Lock the plan store, mapping a poisoned lock to an internal error.
@@ -201,22 +207,11 @@ impl HvlabServer {
 
     /// Classify a registered tool by name: `R`, `M`, `D`, or `X`.
     ///
-    /// The D/X set is the plan-gated set; guest execution is arbitrary
-    /// code (X), the destructive host operations are D, and everything
-    /// else is either a read (R) or a reversible mutation (M).
+    /// Delegates to [`registry`], which is the single source of truth for
+    /// classes; an unknown name comes back class D (fail closed).
     #[must_use]
     pub fn tool_class(name: &str) -> &'static str {
-        if plans::is_plan_gated(name) {
-            if name.starts_with("hv_guest_") {
-                "X"
-            } else {
-                "D"
-            }
-        } else if READ_ONLY_TOOLS.contains(&name) {
-            "R"
-        } else {
-            "M"
-        }
+        registry::class_of(name).as_str()
     }
 
     /// Run over stdio until the client disconnects.
@@ -1032,20 +1027,118 @@ impl HvlabServer {
 
     /// `hv_tools_list`.
     #[tool(
-        description = "List every registered tool with its safety class (R read-only, M mutating, D destructive, X guest code execution)."
+        description = "List every registered tool with its safety class (R read-only, M mutating, D destructive, X guest code execution) and family. Cheap: names only, no schemas. Use hv_tools_describe for one tool's arguments."
     )]
     #[allow(clippy::unnecessary_wraps, reason = "rmcp tool fns all return Result")]
     fn hv_tools_list(&self) -> Result<Json<ToolListResult>, rmcp::ErrorData> {
-        let mut tools: Vec<ToolEntry> = Self::tool_router()
-            .list_all()
-            .into_iter()
-            .map(|t| ToolEntry {
-                class: Self::tool_class(&t.name).to_owned(),
-                name: t.name.into_owned(),
+        let mut tools: Vec<ToolEntry> = registry::REGISTRY
+            .iter()
+            .map(|m| ToolEntry {
+                name: m.name.to_owned(),
+                class: m.class.as_str().to_owned(),
+                family: m.family.as_str().to_owned(),
+                advertised: self.profile.advertises(m.name),
             })
             .collect();
         tools.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(Json(ToolListResult { tools }))
+        Ok(Json(ToolListResult {
+            total_registered: registry::REGISTRY.len() as u64,
+            profile: self.profile.name().to_owned(),
+            tools,
+        }))
+    }
+
+    /// `hv_tools_search`.
+    #[tool(
+        description = "Search the tool catalogue by name, family, or class. Returns names and one-line purposes; follow up with hv_tools_describe to get a tool's arguments. Use this to reach tools that are not advertised in tools/list."
+    )]
+    #[allow(clippy::unnecessary_wraps, reason = "rmcp tool fns all return Result")]
+    fn hv_tools_search(
+        &self,
+        Parameters(args): Parameters<ToolSearchArgs>,
+    ) -> Result<Json<ToolSearchResult>, rmcp::ErrorData> {
+        let family = match args.family.as_deref() {
+            None | Some("") => None,
+            Some(f) => Some(registry::Family::parse(&f.to_lowercase()).ok_or_else(|| {
+                mcp_err(&HvError::invalid_argument(
+                    "family",
+                    &format!("unknown family {f:?}; known: {:?}", registry::families()),
+                ))
+            })?),
+        };
+        let class = match args.class.as_deref() {
+            None | Some("") => None,
+            Some(c) => {
+                let up = c.to_uppercase();
+                if !matches!(up.as_str(), "R" | "M" | "D" | "X") {
+                    return Err(mcp_err(&HvError::invalid_argument(
+                        "class",
+                        &format!("unknown class {c:?}; use one of R, M, D, X"),
+                    )));
+                }
+                Some(up)
+            }
+        };
+
+        let hits: Vec<&registry::ToolMeta> = registry::search(args.query.as_deref().unwrap_or(""))
+            .into_iter()
+            .filter(|m| family.is_none_or(|f| m.family == f))
+            .filter(|m| class.as_ref().is_none_or(|c| m.class.as_str() == c))
+            .filter(|m| !args.advertised_only || self.profile.advertises(m.name))
+            .collect();
+
+        let matched = hits.len() as u64;
+        let tools = hits
+            .into_iter()
+            .map(|m| ToolSummary {
+                name: m.name.to_owned(),
+                class: m.class.as_str().to_owned(),
+                family: m.family.as_str().to_owned(),
+                purpose: self.purpose_of(m.name),
+                advertised: self.profile.advertises(m.name),
+            })
+            .collect();
+        Ok(Json(ToolSearchResult { tools, matched }))
+    }
+
+    /// `hv_tools_describe`.
+    #[tool(
+        description = "Get one tool's full definition: description, safety class, whether it needs a plan token, and the exact JSON Schema for its arguments. Call this before invoking a tool that is not in tools/list."
+    )]
+    fn hv_tools_describe(
+        &self,
+        Parameters(args): Parameters<ToolDescribeArgs>,
+    ) -> Result<Json<ToolDescribeResult>, rmcp::ErrorData> {
+        let meta = registry::get(&args.name)
+            .ok_or_else(|| mcp_err(&HvError::not_found("tool", &args.name)))?;
+        let router = Self::tool_router();
+        let defined = router
+            .get(&args.name)
+            .ok_or_else(|| mcp_err(&HvError::not_found("tool", &args.name)))?;
+        Ok(Json(ToolDescribeResult {
+            name: meta.name.to_owned(),
+            class: meta.class.as_str().to_owned(),
+            family: meta.family.as_str().to_owned(),
+            description: defined.description.as_deref().unwrap_or("").to_owned(),
+            needs_plan: meta.class.needs_plan(),
+            input_schema: serde_json::Value::Object((*defined.input_schema).clone()),
+        }))
+    }
+}
+
+impl HvlabServer {
+    /// First sentence of a tool's built-in description.
+    #[allow(
+        clippy::unused_self,
+        reason = "kept as a method for call-site symmetry"
+    )]
+    fn purpose_of(&self, name: &str) -> String {
+        let router = Self::tool_router();
+        router
+            .get(name)
+            .and_then(|t| t.description.as_deref())
+            .map(profile::first_sentence_public)
+            .unwrap_or_default()
     }
 }
 
@@ -1174,15 +1267,54 @@ impl rmcp::ServerHandler for HvlabServer {
         }
     }
 
+    /// Advertise the profile's tools, in the lean shape.
+    ///
+    /// This is the *discovery* surface, and the only place context cost
+    /// is decided. Tools outside the active profile are still fully
+    /// callable — `call_tool` resolves by name through the router, and
+    /// argument validation comes from the handler's own type, neither of
+    /// which consults this list. Dropping `outputSchema` and the
+    /// description tail halves the payload without removing anything a
+    /// caller needs in order to choose a tool.
+    fn list_tools(
+        &self,
+        _request: Option<rmcp::model::PaginatedRequestParams>,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> impl Future<Output = Result<rmcp::model::ListToolsResult, rmcp::ErrorData>> + '_ {
+        let supports_cache_hints = context
+            .protocol_version()
+            .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        let active = self.profile.clone();
+        let tools: Vec<rmcp::model::Tool> = Self::tool_router()
+            .list_all()
+            .iter()
+            .filter(|t| active.advertises(&t.name))
+            .map(profile::lean)
+            .collect();
+        async move {
+            Ok(rmcp::model::ListToolsResult {
+                result_type: Some(rmcp::model::ResultType::COMPLETE),
+                tools,
+                meta: None,
+                next_cursor: None,
+                ttl_ms: supports_cache_hints.then_some(0),
+                cache_scope: supports_cache_hints.then_some(rmcp::model::CacheScope::Public),
+            })
+        }
+    }
+
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         info.server_info.name = "hvlab".into();
         info.server_info.version = env!("CARGO_PKG_VERSION").into();
-        info.instructions = Some(
-            "Hyper-V control plane. Tools: dump inspection (fast, no debugger), \
-             VM inventory via WMI v2. Destructive operations require a plan token."
-                .into(),
-        );
+        info.instructions = Some(format!(
+            "Hyper-V control plane on this host. tools/list advertises the \"{}\" profile \
+             to keep the context cost low; it is not the whole API. Use hv_tools_search to find \
+             any tool by name or family and hv_tools_describe to read its arguments before \
+             calling it — every registered tool is callable by name whatever the profile. \
+             Destructive (D) and guest-execution (X) tools require a plan token from hv_plan.",
+            self.profile.name()
+        ));
         info
     }
 }
@@ -1221,7 +1353,9 @@ mod conformance {
             "hv_switch_create",
             "hv_switch_list",
             "hv_switch_remove",
+            "hv_tools_describe",
             "hv_tools_list",
+            "hv_tools_search",
             "hv_vhd_compact",
             "hv_vhd_create",
             "hv_vhd_get",
@@ -1251,6 +1385,124 @@ mod conformance {
             names, expected,
             "tool registry changed; update EXPECTED deliberately"
         );
+    }
+
+    /// The property the whole context strategy rests on: dropping a tool
+    /// from `tools/list` must not remove it from the API. Dispatch
+    /// resolves names through the router and validates arguments from the
+    /// handler's type; only `list_all()` is filtered.
+    #[test]
+    fn unlisted_tools_still_dispatch() {
+        // A tool deliberately outside the core profile.
+        let name = "hv_vhd_resize";
+        assert!(
+            !crate::profile::Profile::Core.advertises(name),
+            "{name} must be outside core for this test to mean anything"
+        );
+        // It is nevertheless registered and callable: ask the router for
+        // it directly, the same lookup `call_tool` performs.
+        let router = HvlabServer::tool_router();
+        assert!(
+            router.get(name).is_some(),
+            "{name} must remain dispatchable while unlisted"
+        );
+        // And its argument schema is intact.
+        let tool = router.get(name).expect("registered");
+        assert!(tool.input_schema.contains_key("properties"));
+    }
+
+    /// `tools/list` must stay cheap. This is the guard that keeps the
+    /// server from silently re-bloating a harness's context window as
+    /// tools are added: it fails if the advertised payload grows past a
+    /// budget, which is a real constraint rather than a style note.
+    #[test]
+    fn advertised_listing_stays_within_its_context_budget() {
+        const CORE_BUDGET_BYTES: usize = 12_000;
+
+        let advertised: Vec<rmcp::model::Tool> = HvlabServer::tool_router()
+            .list_all()
+            .iter()
+            .filter(|t| crate::profile::Profile::Core.advertises(&t.name))
+            .map(crate::profile::lean)
+            .collect();
+
+        assert!(
+            !advertised.is_empty(),
+            "the core profile must advertise something"
+        );
+        let bytes: usize = advertised
+            .iter()
+            .map(|t| serde_json::to_string(t).map_or(0, |s| s.len()))
+            .sum();
+        assert!(
+            bytes <= CORE_BUDGET_BYTES,
+            "advertised tools/list is {bytes} bytes (~{} tokens), over the {CORE_BUDGET_BYTES}-byte budget; \
+             move a tool out of core, or trim its schema",
+            bytes / 4
+        );
+
+        // Sanity: the lean form is materially smaller than the full form.
+        let full: usize = HvlabServer::tool_router()
+            .list_all()
+            .iter()
+            .filter(|t| crate::profile::Profile::Core.advertises(&t.name))
+            .map(|t| serde_json::to_string(t).map_or(0, |s| s.len()))
+            .sum();
+        assert!(
+            bytes * 2 < full,
+            "lean projection should roughly halve the payload: {bytes} vs {full}"
+        );
+    }
+
+    /// Every registered tool must be described in the registry, and every
+    /// registry entry must exist in the router: one source of truth.
+    #[test]
+    fn registry_and_router_agree() {
+        let router = HvlabServer::tool_router();
+        let registered: std::collections::BTreeSet<String> = router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.into_owned())
+            .collect();
+        let described: std::collections::BTreeSet<String> = crate::registry::REGISTRY
+            .iter()
+            .map(|m| m.name.to_owned())
+            .collect();
+        assert_eq!(
+            registered, described,
+            "a tool exists in one place but not the other"
+        );
+    }
+
+    #[test]
+    fn profile_decides_listing_but_not_reachability() {
+        let full = HvlabServer::tool_router().list_all().len();
+        let core = HvlabServer::tool_router()
+            .list_all()
+            .iter()
+            .filter(|t| crate::profile::Profile::Core.advertises(&t.name))
+            .count();
+        assert!(core < full, "core must advertise a subset");
+        // Every non-core tool is still in the router.
+        for t in HvlabServer::tool_router().list_all() {
+            if !crate::profile::Profile::Core.advertises(&t.name) {
+                assert!(
+                    HvlabServer::tool_router().get(&t.name).is_some(),
+                    "{} became unreachable",
+                    t.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn discovery_tools_are_always_advertised() {
+        for name in crate::profile::DISCOVERY_TOOLS {
+            assert!(
+                crate::profile::Profile::Core.advertises(name),
+                "{name} must be advertised or the long tail is unreachable"
+            );
+        }
     }
 
     #[test]

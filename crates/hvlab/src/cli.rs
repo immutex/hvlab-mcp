@@ -90,30 +90,44 @@ fn dump_inspect(path: Option<&str>) -> std::process::ExitCode {
 
 /// `hvlab tools`: list registered MCP tools with their safety classes.
 #[must_use]
+/// `hvlab tools` — the catalogue, one line per tool, showing which are
+/// advertised under each profile.
 pub fn tools() -> std::process::ExitCode {
+    use hvlab_mcp::profile::Profile;
+    use hvlab_mcp::registry;
+
     let router = hvlab_mcp::HvlabServer::router();
-    let mut tools: Vec<(String, String, String)> = router
-        .list_all()
-        .into_iter()
-        .map(|t| {
-            let name = t.name.into_owned();
-            let class = hvlab_mcp::HvlabServer::tool_class(&name).to_owned();
-            let desc = t
-                .description
-                .map(std::borrow::Cow::into_owned)
-                .unwrap_or_default();
-            (name, class, desc)
-        })
-        .collect();
-    tools.sort_by(|a, b| a.0.cmp(&b.0));
     let mut out = String::new();
-    for (name, class, desc) in &tools {
-        let _ = writeln!(out, "{class}  {name}  {desc}");
+    let core = Profile::Core;
+    let advertised = registry::REGISTRY
+        .iter()
+        .filter(|m| core.advertises(m.name))
+        .count();
+
+    for m in registry::REGISTRY {
+        let desc = router
+            .get(m.name)
+            .and_then(|t| t.description.as_deref())
+            .unwrap_or("");
+        let marker = if core.advertises(m.name) {
+            "core"
+        } else {
+            "-   "
+        };
+        let _ = writeln!(
+            out,
+            "{}  {marker}  {:<24} {:<11} {}",
+            m.class.as_str(),
+            m.name,
+            m.family.as_str(),
+            desc
+        );
     }
     let _ = write!(
         out,
-        "\n{} tools; classes: R read-only, M mutating, D destructive (plan token), X guest code execution (plan token)\n",
-        tools.len()
+        "\n{} tools registered; {advertised} advertised by the `core` profile (the rest stay callable by name: \
+         see hv_tools_search / hv_tools_describe).\nClasses: R read-only, M mutating, D destructive (plan token), X guest code execution (plan token).\n         Set HVLAB_TOOLS=core|full|readonly or a list of names/families to change what is advertised.\n",
+        registry::REGISTRY.len()
     );
     let stdout = std::io::stdout();
     let mut lock = stdout.lock();

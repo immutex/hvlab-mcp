@@ -12,10 +12,40 @@ Rust implementation of the [PLAN.md](PLAN.md) design. Workspace layout:
 | `crates/hvlab-debug` | crash-dump analysis via the `cdb` debugger: `!analyze -v`, `kv`, `lm`, disk cache, dump discovery | **done** (dumps only; live KD not implemented) |
 | `crates/hvlab-mcp` | MCP server (rmcp): 40 tools over stdio, plan tokens for destructive calls | **done** |
 
-`hvlab` ships 40 of the 200 tools described in [PLAN.md](PLAN.md) §5. The
+`hvlab` ships 42 of the 200 tools described in [PLAN.md](PLAN.md) §5. The
 sections for guest inspection, console/serial, live kernel debugging,
 orchestration, artifacts, and recipes are **design targets, not
 implemented**.
+
+### Context cost
+
+A harness pays for every tool definition it is handed. A naive full
+listing of this server is ~10k tokens for 42 tools — at the catalogue's
+full size that would be ~48k tokens resident before any work starts, and
+52% of it is `outputSchema`, which no client needs in order to *choose* a
+tool.
+
+So `tools/list` is treated as a **discovery** surface, not the API:
+
+| Profile (`HVLAB_TOOLS`) | Advertised | ~tokens |
+|---|---|---|
+| `core` (default) | 18 | ~1.8k |
+| `readonly` | class-`R` tools only | — |
+| `full` | all 42 | ~5k |
+| `a,b` / `guest,vm` | a list of tool names or families | — |
+
+Advertised tools are sent **lean**: no `outputSchema`, no `$schema` URI,
+one-line descriptions. Results are unchanged — callers still get
+`structuredContent`.
+
+Crucially, **tools outside the profile remain callable by name**. That is
+not a convention, it is how the protocol works here: dispatch resolves a
+tool name through the router and validates arguments from the handler's
+own type — neither path consults the advertised list. `hv_tools_search`
+finds any tool by name/family/class, and `hv_tools_describe` returns its
+exact argument schema, so nothing becomes unreachable. Both properties
+are pinned by tests (`unlisted_tools_still_dispatch`,
+`advertised_listing_stays_within_its_context_budget`).
 
 ## Quick start
 
@@ -28,8 +58,12 @@ cargo build --release
 # Run the MCP server over stdio (for an agent or MCP client)
 ./target/release/hvlab.exe mcp
 
-# List every registered tool and its safety class
+# List every registered tool, its safety class, and whether it is
+# advertised by the default profile
 ./target/release/hvlab.exe tools
+
+# Advertise the whole catalogue instead of the core 18
+HVLAB_TOOLS=full ./target/release/hvlab.exe mcp
 ```
 
 Parses the crash header and prints the bugcheck in ~20 ms, no debugger

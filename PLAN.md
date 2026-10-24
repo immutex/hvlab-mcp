@@ -425,6 +425,16 @@ The plan digest is `SHA-256(canonical_json(tool, args, target, policy_revision))
 
 ### 4.7 Tool profiles
 
+> **Implemented** (see README §Context cost). `core` is the default and
+> advertises 18 tools (~1.8k tokens); `full` advertises all 42. Advertised
+> tools are projected lean (no `outputSchema`, no `$schema`, one-line
+> descriptions). Tools outside the profile remain *callable by name*:
+> dispatch resolves through the router and validates from the handler's
+> own type, so filtering the listing cannot remove capability.
+> `hv_tools_search` + `hv_tools_describe` are always advertised so the
+> long tail stays discoverable under any profile.
+
+
 200 tools is too many for a homelab user and too few for a power user if we cut them. Profiles solve this without a second binary:
 
 | Profile | Size | Audience |

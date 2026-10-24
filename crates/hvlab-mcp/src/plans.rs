@@ -94,18 +94,24 @@ fn hex_32(bytes: &[u8]) -> String {
 /// Policy revision stamped into every minted plan; there is one policy.
 pub const POLICY_REVISION: u64 = 1;
 
-/// Tools that require a plan token (classes D and X).
-pub const PLAN_GATED_TOOLS: &[&str] = &[
-    "hv_checkpoint_delete",
-    "hv_checkpoint_restore",
-    "hv_guest_exec",
-    "hv_guest_powershell",
-];
-
 /// Whether `action` names a plan-gated tool.
+///
+/// Derived from [`crate::registry`] — the class table is the only place
+/// that decides this, so a tool cannot be gated in one place and
+/// ungated in another (H-42).
 #[must_use]
 pub fn is_plan_gated(action: &str) -> bool {
-    PLAN_GATED_TOOLS.contains(&action)
+    crate::registry::needs_plan(action)
+}
+
+/// The plan-gated tool names, for error messages and `hv_plan` hints.
+#[must_use]
+pub fn plan_gated_tools() -> Vec<&'static str> {
+    crate::registry::REGISTRY
+        .iter()
+        .filter(|m| m.class.needs_plan())
+        .map(|m| m.name)
+        .collect()
 }
 
 /// In-memory store of minted plans.
@@ -137,7 +143,10 @@ impl PlanStore {
         if !is_plan_gated(action) {
             return Err(HvError::invalid_argument(
                 "action",
-                &format!("{action} is not a plan-gated tool; known: {PLAN_GATED_TOOLS:?}"),
+                &format!(
+                    "{action} is not a plan-gated tool; known: {:?}",
+                    plan_gated_tools()
+                ),
             ));
         }
         if !args.is_object() {

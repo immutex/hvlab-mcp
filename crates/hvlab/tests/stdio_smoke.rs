@@ -89,6 +89,7 @@ fn call(
 }
 
 #[test]
+#[allow(clippy::too_many_lines, reason = "one end-to-end session, in order")]
 fn stdio_smoke() {
     let (mut child, mut stdin, mut reader) = spawn_server();
     handshake(&mut stdin, &mut reader);
@@ -97,9 +98,12 @@ fn stdio_smoke() {
     let tools = listed["result"]["tools"]
         .as_array()
         .unwrap_or_else(|| panic!("tools/list shape: {listed}"));
+    // The default profile advertises a small, cheap listing — not the
+    // whole catalogue — so a harness is not billed for schemas it will
+    // not use.
     assert!(
-        tools.len() == 40,
-        "expected exactly 40 tools, got {}",
+        tools.len() == 18,
+        "expected exactly 18 advertised tools (core profile), got {}",
         tools.len()
     );
     for t in tools {
@@ -107,6 +111,12 @@ fn stdio_smoke() {
         assert!(!name.is_empty(), "unnamed tool: {t}");
         let desc = t["description"].as_str().unwrap_or_default();
         assert!(!desc.trim().is_empty(), "tool {name} has no description");
+        // The lean projection drops output schemas: they are half the
+        // payload and no client needs them to choose a tool.
+        assert!(
+            t.get("outputSchema").is_none(),
+            "advertised tool {name} still carries an outputSchema"
+        );
     }
     let names: Vec<&str> = tools.iter().filter_map(|t| t["name"].as_str()).collect();
     for expected in [
@@ -116,11 +126,75 @@ fn stdio_smoke() {
         "hv_dump_find",
         "hv_plan",
         "hv_guest_exec",
-        "hv_vhd_create",
-        "hv_switch_list",
+        "hv_tools_search",
+        "hv_tools_describe",
     ] {
-        assert!(names.contains(&expected), "missing tool {expected}");
+        assert!(
+            names.contains(&expected),
+            "missing advertised tool {expected}"
+        );
     }
+    // A long-tail tool must NOT be advertised...
+    assert!(
+        !names.contains(&"hv_vhd_create"),
+        "hv_vhd_create should be outside the core profile"
+    );
+
+    // ...but it must still be findable and callable.
+    let searched = call(
+        &mut stdin,
+        &mut reader,
+        20,
+        "tools/call",
+        &json!({ "name": "hv_tools_search", "arguments": { "query": "vhd_create" } }),
+    );
+    assert_eq!(searched["result"]["isError"], false, "search: {searched}");
+    let hits = searched["result"]["structuredContent"]["tools"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        hits.iter().any(|t| t["name"] == "hv_vhd_create"),
+        "search must find an unadvertised tool: {searched}"
+    );
+
+    let described = call(
+        &mut stdin,
+        &mut reader,
+        21,
+        "tools/call",
+        &json!({ "name": "hv_tools_describe", "arguments": { "name": "hv_vhd_create" } }),
+    );
+    assert_eq!(
+        described["result"]["isError"], false,
+        "describe: {described}"
+    );
+    assert!(
+        described["result"]["structuredContent"]["input_schema"]["properties"]
+            .as_object()
+            .is_some_and(|p| !p.is_empty()),
+        "describe must return the real argument schema: {described}"
+    );
+
+    // The point of the whole arrangement: an unadvertised tool runs.
+    let unlisted = call(
+        &mut stdin,
+        &mut reader,
+        22,
+        "tools/call",
+        &json!({ "name": "hv_vhd_inspect", "arguments": { "path": "C:\\nope\\none.vhdx" } }),
+    );
+    // It must reach the backend (producing a real error about the path),
+    // not be rejected as an unknown tool.
+    let body = unlisted.to_string();
+    assert!(
+        !body.contains("tool not found"),
+        "an unadvertised tool must still dispatch: {unlisted}"
+    );
+    assert!(
+        body.contains("hv.not_found") || body.contains("hv.transport"),
+        "unadvertised tool should reach the backend: {unlisted}"
+    );
 
     // A read-only call that works without Hyper-V admin.
     let found = call(

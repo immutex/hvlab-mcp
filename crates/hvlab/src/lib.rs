@@ -21,7 +21,12 @@ pub fn run(args: &[String]) -> std::process::ExitCode {
 
     match command.as_str() {
         "dump" => cli::dump(&args[1..]),
-        "mcp" => tokio_main(hvlab_mcp::HvlabServer::new().serve_stdio()),
+        "mcp" => {
+            // HVLAB_TOOLS selects how much of the catalogue is advertised;
+            // every registered tool stays callable whatever the profile.
+            let profile = hvlab_mcp::profile::Profile::from_env();
+            tokio_main(hvlab_mcp::HvlabServer::with_profile(profile).serve_stdio())
+        }
         "tools" => cli::tools(),
         "doctor" => {
             eprintln!("hvlab doctor: not yet implemented (milestone M2)");

@@ -663,6 +663,12 @@ pub struct CapabilitiesResult {
 pub struct ToolListResult {
     /// Registered tool names with safety classes.
     pub tools: Vec<ToolEntry>,
+    /// Total registered tools, before any filter or profile is applied.
+    pub total_registered: u64,
+    /// The advertisement profile this server is running (`core`, `full`,
+    /// `readonly`, `custom`). Tools outside it are still callable by
+    /// name; use `hv_tools_search` to find them.
+    pub profile: String,
 }
 
 /// One tool name + class.
@@ -672,13 +678,83 @@ pub struct ToolEntry {
     pub name: String,
     /// Safety class: `R`, `M`, `D`, or `X`.
     pub class: String,
+    /// Family, for grouping and filtering (`vm`, `guest`, `dump`, ...).
+    pub family: String,
+    /// Whether this tool appears in `tools/list` under the active profile.
+    pub advertised: bool,
+}
+
+/// Input for `hv_tools_search`.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema, Default)]
+pub struct ToolSearchArgs {
+    /// Case-insensitive substring to match against tool names, families,
+    /// or classes. Empty returns the whole catalogue.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Restrict to one family: meta, host, vm, checkpoint, storage,
+    /// network, device, guest, dump.
+    #[serde(default)]
+    pub family: Option<String>,
+    /// Restrict to one safety class: R, M, D, or X.
+    #[serde(default)]
+    pub class: Option<String>,
+    /// Only tools advertised under the active profile.
+    #[serde(default)]
+    pub advertised_only: bool,
+}
+
+/// Result of `hv_tools_search`.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ToolSearchResult {
+    /// Matching tools, name + class + family + one-line purpose.
+    pub tools: Vec<ToolSummary>,
+    /// How many matched in total (before any display cap).
+    pub matched: u64,
+}
+
+/// A tool as returned by search: enough to choose it, without schemas.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ToolSummary {
+    /// Tool name — pass this to `hv_tools_describe` for its full schema.
+    pub name: String,
+    /// Safety class: `R`, `M`, `D`, or `X`.
+    pub class: String,
+    /// Family.
+    pub family: String,
+    /// First sentence of the tool's description.
+    pub purpose: String,
+    /// Whether it is advertised under the active profile.
+    pub advertised: bool,
+}
+
+/// Input for `hv_tools_describe`.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ToolDescribeArgs {
+    /// Tool name, as returned by `hv_tools_search` or `hv_tools_list`.
+    pub name: String,
+}
+
+/// Result of `hv_tools_describe`: the full definition for one tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ToolDescribeResult {
+    /// Tool name.
+    pub name: String,
+    /// Safety class.
+    pub class: String,
+    /// Family.
+    pub family: String,
+    /// Full description.
+    pub description: String,
+    /// Whether it requires a plan token (classes D and X do).
+    pub needs_plan: bool,
+    /// The exact JSON Schema for this tool's arguments.
+    pub input_schema: serde_json::Value,
 }
 
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
-    use crate::plans::PLAN_GATED_TOOLS;
 
     /// The `confirm` args for a D/X call must be the tool's args minus
     /// `confirm`; mirror the server's `authorize` stripping here so the
@@ -704,10 +780,5 @@ mod tests {
         let obj = stripped.as_object().unwrap();
         assert!(!obj.contains_key("confirm"));
         assert_eq!(obj.get("vm").unwrap(), "v");
-    }
-
-    #[test]
-    fn plan_gated_list_is_nonempty() {
-        assert!(!PLAN_GATED_TOOLS.is_empty());
     }
 }
