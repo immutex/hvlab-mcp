@@ -12,7 +12,7 @@ description = "Domain types for hvlab: ids, errors, plans, VM state"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10.9"
+sha2 = "0.11.1"
 thiserror = { workspace = true }
 uuid = { workspace = true }
 
