@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["crash-dump", "cdb", "windbg", "debugging"]
 description = "Debugger-driven crash dump analysis (cdb subprocess) for hvlab"
 
 [dependencies]

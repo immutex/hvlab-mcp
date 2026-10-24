@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["hyper-v", "mcp", "cli", "virtualization", "crash-dump"]
 description = "Hyper-V control plane for agents and humans: MCP server + CLI"
 
 [[bin]]

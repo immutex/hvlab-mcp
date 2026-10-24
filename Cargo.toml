@@ -15,8 +15,19 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/hvlab/hvlab"
+repository = "https://github.com/immutex/hvlab-mcp"
+homepage = "https://github.com/immutex/hvlab-mcp"
+documentation = "https://docs.rs/hvlab"
+readme = "README.md"
+authors = ["The hvlab contributors"]
 description = "Hyper-V control plane for agents and humans: MCP server + CLI"
+keywords = ["hyper-v", "mcp", "virtualization", "wmi", "crash-dump"]
+categories = [
+    "command-line-utilities",
+    "api-bindings",
+    "os::windows-apis",
+    "development-tools::debugging",
+]
 
 [workspace.dependencies]
 hvlab-core = { path = "crates/hvlab-core", version = "0.1.0" }

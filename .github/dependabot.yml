@@ -1,0 +1,26 @@
+version: 2
+
+updates:
+  # Rust dependencies. Grouped so a routine bump is one PR, not twenty.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        applies-to: version-updates
+        update-types: ["patch", "minor"]
+    commit-message:
+      prefix: "deps"
+    labels: ["dependencies"]
+
+  # Keep the pinned actions current; a stale action is a supply-chain risk.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"
+    labels: ["dependencies", "ci"]

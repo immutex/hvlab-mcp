@@ -1,0 +1,63 @@
+name: Feature request
+description: Propose a new tool, a behaviour change, or an integration
+title: "[feat] "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, check [PLAN.md](https://github.com/immutex/hvlab-mcp/blob/main/PLAN.md) §5 —
+        the catalogue already lists the intended tool surface, and the README
+        "Status" section says what is implemented today. If your idea is already
+        on the list, saying so helps prioritize it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do that you cannot do today? Describe the workflow, not the API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like
+      description: |
+        If it is a new tool: proposed name, arguments, and what it should return.
+        If it changes an existing tool: the current behaviour and the desired one.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: class
+    attributes:
+      label: Proposed safety class
+      description: |
+        R = read-only, M = reversible mutation, D = destructive (needs a plan
+        token), X = arbitrary code execution in a guest (needs a plan token).
+        When in doubt, pick the more restrictive class.
+      options:
+        - R — read-only
+        - M — mutating, reversible
+        - D — destructive (plan token)
+        - X — guest code execution (plan token)
+        - Not applicable
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Existing tools, PowerShell cmdlets, or a recipe you could write instead.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to open a pull request for this
+        - label: I can test a preview build on my host

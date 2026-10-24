@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["mcp", "hyper-v", "ai-agents", "json-rpc", "llm-tools"]
 description = "MCP server exposing hvlab capabilities over stdio/HTTP"
 
 [dependencies]

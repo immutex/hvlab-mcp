@@ -1,0 +1,99 @@
+name: Bug report
+description: Something behaves differently than documented, or fails outright
+title: "[bug] "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Two things make a huge difference and are
+        usually the reason an issue stalls: the **exact output**, and whether
+        your shell is **elevated / in Hyper-V Administrators**.
+
+        `hvlab` reports `hv.permission` rather than an empty list when the WMI
+        provider filters instances out, so knowing your elevation state
+        resolves a large share of reports immediately.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you ran, and what came back. Paste the command and its full output.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: And where that expectation comes from — docs, a previous version, or a similar tool.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal sequence. If it needs a specific VM state, say so.
+      placeholder: |
+        1. hvlab mcp
+        2. tools/call hv_vm_list
+        3. ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - MCP server (`hvlab mcp`)
+        - CLI (`hvlab ...`)
+        - Library API
+        - Build / CI
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: hvlab version
+      description: Output of `hvlab version`, or the commit SHA.
+      placeholder: "0.1.0 / a5e67c6"
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows build
+      description: Output of `winver` or `[System.Environment]::OSVersion.Version`.
+      placeholder: "10.0.26200"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: elevation
+    attributes:
+      label: Elevation / group membership
+      description: Most WMI inventory and mutation calls need Hyper-V Administrators or an elevated shell.
+      options:
+        - Elevated shell
+        - Not elevated, but in Hyper-V Administrators
+        - Not elevated, not in Hyper-V Administrators
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: |
+        Relevant event log entries, the VM's generation and state, or whether a
+        checkpoint/dump is involved. Do **not** paste guest memory or crash
+        dumps — describe them instead.
+    validations:
+      required: false

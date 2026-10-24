@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["hyper-v", "wmi", "virtualization", "windows"]
 description = "Hyper-V WMI v2 management plane for hvlab"
 
 [dependencies]

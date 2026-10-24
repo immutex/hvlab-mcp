@@ -1,2 +1,37 @@
-target/
-Cargo.lock
+# Rust
+/target/
+**/*.rs.bk
+
+# Build output
+/out/
+/dist/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# Local env and secrets — never commit these
+.env
+.env.local
+*.local.toml
+
+# Profiling artefacts
+perf.data
+perf.data.old
+*.pdb
+*.dSYM/
+flamegraph.svg
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+/tarpaulin-report.*
+
+# Local test output
+/crates/*/proptest-regressions/
+!crates/hvlab-dump/proptest-regressions/

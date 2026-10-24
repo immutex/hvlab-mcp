@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+keywords = ["crash-dump", "windbg", "bugcheck", "windows"]
 description = "Windows crash dump parsing and triage for hvlab"
 
 [dependencies]

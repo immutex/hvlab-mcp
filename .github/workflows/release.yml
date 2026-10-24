@@ -1,0 +1,89 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build artifacts but do not create a release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            arch: x64
+          - target: aarch64-pc-windows-msvc
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }} -p hvlab
+
+      - name: Stage
+        shell: pwsh
+        run: |
+          $stage = "dist/hvlab-${{ github.ref_name }}-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/hvlab.exe" $stage
+          Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE, NOTICE, CHANGELOG.md $stage
+          # Record the exact toolchain and dependency set for reproducibility.
+          cargo --version            | Out-File "$stage/BUILD.txt" -Encoding utf8
+          rustc --version            | Out-File "$stage/BUILD.txt" -Append -Encoding utf8
+          git rev-parse HEAD         | Out-File "$stage/BUILD.txt" -Append -Encoding utf8
+          (Get-FileHash "$stage/hvlab.exe" -Algorithm SHA256).Hash |
+            Out-File "$stage/hvlab.exe.sha256" -Encoding utf8
+          Compress-Archive -Path "$stage/*" -DestinationPath "$stage.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hvlab-${{ matrix.arch }}
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: publish
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file CHANGELOG.md \
+            --verify-tag \
+            dist/*.zip

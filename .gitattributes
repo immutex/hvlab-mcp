@@ -1,0 +1,23 @@
+# Normalize to LF in the repository; check out native on Windows.
+* text=auto eol=lf
+
+# Source
+*.rs      text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+*.json    text eol=lf
+*.svg     text eol=lf
+
+# Batch/PowerShell keep CRLF so they run on Windows
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+*.ps1     text eol=crlf
+
+# Binary
+*.dmp     binary
+*.png     binary
+*.jpg     binary
+*.ico     binary
+*.zip     binary
