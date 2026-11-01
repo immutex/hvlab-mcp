@@ -39,6 +39,33 @@ pub use tools::{
 )]
 use tools::*;
 
+/// Guest credential from the environment (PLAN.md §8: `HVLAB_GUEST_USER`
+/// plus the password env named by `HVLAB_GUEST_PASSWORD_ENV`, default
+/// `HVLAB_GUEST_PASSWORD`). Both must be set; either one alone is
+/// ignored so a half-configured server fails as credential-less rather
+/// than sending an empty password.
+fn guest_credential_from_env() -> Option<hvlab_guest::GuestCredential> {
+    let user = std::env::var("HVLAB_GUEST_USER").ok()?;
+    let password_env =
+        std::env::var("HVLAB_GUEST_PASSWORD_ENV").unwrap_or_else(|_| "HVLAB_GUEST_PASSWORD".into());
+    let password = std::env::var(&password_env).ok()?;
+    if user.trim().is_empty() || password.is_empty() {
+        return None;
+    }
+    Some(hvlab_guest::GuestCredential::new(user, password))
+}
+
+/// Open a guest session, with the environment credential when one is
+/// configured. Guests without a logon password use the plain path.
+fn open_guest_session(vm: &str) -> Result<hvlab_guest::PsDirectSession, HvError> {
+    match guest_credential_from_env() {
+        Some(credential) => {
+            hvlab_guest::PsDirectSession::open_with_credential(vm, None, &credential)
+        }
+        None => hvlab_guest::PsDirectSession::open(vm, None),
+    }
+}
+
 /// Map a typed [`HvError`] onto the MCP wire (H-38: one error channel).
 ///
 /// The JSON-RPC code distinguishes the coarse failure class, and the
@@ -879,8 +906,7 @@ impl HvlabServer {
         &self,
         Parameters(args): Parameters<GuestPingArgs>,
     ) -> Result<Json<GuestPingResult>, rmcp::ErrorData> {
-        let mut session =
-            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        let mut session = open_guest_session(&args.vm).map_err(|e| mcp_err(&e))?;
         let hostname = session.ping().map_err(|e| mcp_err(&e))?;
         Ok(Json(GuestPingResult { hostname }))
     }
@@ -893,8 +919,7 @@ impl HvlabServer {
         &self,
         Parameters(args): Parameters<GuestExecArgs>,
     ) -> Result<Json<GuestExecResult>, rmcp::ErrorData> {
-        let mut session =
-            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        let mut session = open_guest_session(&args.vm).map_err(|e| mcp_err(&e))?;
         // The authorized timeout is enforced, not advisory (H-39: no
         // parameter is accepted and ignored).
         let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(60));
@@ -922,8 +947,7 @@ impl HvlabServer {
         &self,
         Parameters(args): Parameters<GuestPowershellArgs>,
     ) -> Result<Json<GuestExecResult>, rmcp::ErrorData> {
-        let mut session =
-            hvlab_guest::PsDirectSession::open(&args.vm, None).map_err(|e| mcp_err(&e))?;
+        let mut session = open_guest_session(&args.vm).map_err(|e| mcp_err(&e))?;
         let timeout = Duration::from_secs(args.timeout_secs.unwrap_or(60));
         let out = session
             .powershell_with_timeout(&args.script, timeout)
