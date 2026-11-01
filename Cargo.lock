@@ -376,7 +376,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hvlab"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hvlab-core",
  "hvlab-dump",
@@ -388,7 +388,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "proptest",
  "serde",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-debug"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hvlab-core",
  "hvlab-dump",
@@ -411,7 +411,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-dump"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kdmp-parser",
  "proptest",
@@ -421,7 +421,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-guest"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hvlab-core",
  "proptest",
@@ -435,7 +435,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-host"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hvlab-core",
  "serde",
@@ -447,7 +447,7 @@ dependencies = [
 
 [[package]]
 name = "hvlab-mcp"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "hvlab-core",
  "hvlab-debug",

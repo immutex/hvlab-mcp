@@ -11,7 +11,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 license = "MIT OR Apache-2.0"
@@ -30,11 +30,11 @@ categories = [
 ]
 
 [workspace.dependencies]
-hvlab-core = { path = "crates/hvlab-core", version = "0.1.0" }
-hvlab-dump = { path = "crates/hvlab-dump", version = "0.1.0" }
-hvlab-host = { path = "crates/hvlab-host", version = "0.1.0" }
-hvlab-guest = { path = "crates/hvlab-guest", version = "0.1.0" }
-hvlab-debug = { path = "crates/hvlab-debug", version = "0.1.0" }
+hvlab-core = { path = "crates/hvlab-core", version = "0.2.0" }
+hvlab-dump = { path = "crates/hvlab-dump", version = "0.2.0" }
+hvlab-host = { path = "crates/hvlab-host", version = "0.2.0" }
+hvlab-guest = { path = "crates/hvlab-guest", version = "0.2.0" }
+hvlab-debug = { path = "crates/hvlab-debug", version = "0.2.0" }
 anyhow = "1.0.104"
 rmcp = { version = "3.7", features = ["server", "macros", "schemars", "transport-io"] }
 tokio-util = { version = "0.7.20", features = ["rt"] }

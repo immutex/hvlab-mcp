@@ -11,6 +11,26 @@ releases do not.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-11-01
+
+### Added
+
+- Guest credentials for PowerShell Direct. `GuestCredential` in `hvlab-guest`, with
+  `PsDirectSession::open_with_credential` and `open_with_command_and_credential`.
+  The credential travels in a framed `auth` request that precedes the identity
+  handshake, and the sidecar turns it into a `PSCredential`. It never appears in
+  argv, a temp file, or a log line; `GuestCredential`'s `Debug` prints `***` in
+  place of the password.
+- The sidecar creates its guest session lazily and reports the session flag it
+  actually established, so a refused credential fails the open instead of being
+  retried as a payload.
+- The MCP layer reads `HVLAB_GUEST_USER` plus the password variable named by
+  `HVLAB_GUEST_PASSWORD_ENV` (default `HVLAB_GUEST_PASSWORD`) and passes the
+  credential to every guest tool. Setting one variable without the other is
+  ignored, so a half-configured server runs credential-less rather than sending an
+  empty password. Guests that accept credential-free PS Direct behave as before.
+- `sha256_hex_matches_published_vectors`, pinning FIPS 180-4 known answers.
+
 ### Changed
 
 - `sha2` 0.10 → 0.11 (now on `hybrid-array`). Digest output is unchanged;
@@ -21,10 +41,11 @@ releases do not.
 - The Ubuntu CI leg runs `hvlab-core` and `hvlab-dump` only; the Windows leg
   runs the full workspace.
 
-### Added
+### Notes
 
-- `sha256_hex_matches_published_vectors`, pinning FIPS 180-4 known answers
-  (246 tests on `main`).
+- 246 tests. Field notes from a real kernel-driver lab, including the credential
+  gap that motivated this release, are in
+  [docs/field-notes-2026-10-31.md](docs/field-notes-2026-10-31.md).
 
 ## [0.1.0] — 2026-10-24
 
@@ -110,5 +131,6 @@ the Status section of the README).
   and plan tokens are enforced, the TOML policy file is not.
 - `hvlab doctor` is a stub.
 
-[Unreleased]: https://github.com/immutex/hvlab-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/immutex/hvlab-mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/immutex/hvlab-mcp/releases/tag/v0.2.0
 [0.1.0]: https://github.com/immutex/hvlab-mcp/releases/tag/v0.1.0
