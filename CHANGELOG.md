@@ -43,9 +43,7 @@ releases do not.
 
 ### Notes
 
-- 246 tests. Field notes from a real kernel-driver lab, including the credential
-  gap that motivated this release, are in
-  [docs/field-notes-2026-10-31.md](docs/field-notes-2026-10-31.md).
+- 246 tests.
 
 ## [0.1.0] — 2026-10-24
 
