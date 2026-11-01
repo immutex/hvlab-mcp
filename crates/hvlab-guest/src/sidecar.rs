@@ -54,7 +54,23 @@ $ErrorActionPreference = 'Stop'
 # The VM name arrives base64-encoded: decoding it is the only way it
 # enters the script, and it is never interpolated into a command.
 $vmName = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($VMNameB64))
-$session = New-PSSession -VMName $vmName -ErrorAction Stop
+
+# The guest session is created lazily: guests with a logon password
+# need a credential, which arrives later in a framed 'auth' request
+# (never in argv). Without one, creation is a credential-less attempt.
+$session = $null
+$guestCredential = $null
+
+function Ensure-GuestSession {
+    if ($null -eq $script:session) {
+        if ($null -ne $script:guestCredential) {
+            $script:session = New-PSSession -VMName $script:vmName `
+                -Credential $script:guestCredential -ErrorAction Stop
+        } else {
+            $script:session = New-PSSession -VMName $script:vmName -ErrorAction Stop
+        }
+    }
+}
 
 function Write-Frame([byte[]]$bytes) {
     $out = [Console]::OpenStandardOutput()
@@ -105,7 +121,8 @@ function Get-Sha256([byte[]]$bytes) {
 # A payload must never run on the host: without an established guest
 # session every execution request is refused, not downgraded (H-36).
 function Assert-GuestSession {
-    if ($null -eq $session) { throw 'no guest session established: payload refused' }
+    Ensure-GuestSession
+    if ($null -eq $script:session) { throw 'no guest session established: payload refused' }
 }
 
 # Win32 argv quoting: wrap in quotes when needed, double backslashes
@@ -150,7 +167,27 @@ while ($true) {
 
     try {
         switch ([string]$req.kind) {
+            'auth' {
+                # The password arrives base64 in the framed request,
+                # is held only as a SecureString, and is never echoed.
+                $user = [string]$req.user
+                $plain = [System.Text.Encoding]::UTF8.GetString((B64ToBytes $req.password_b64))
+                $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+                $plain = $null
+                $script:guestCredential = New-Object System.Management.Automation.PSCredential($user, $secure)
+                try {
+                    Ensure-GuestSession
+                    $resp = @{ id = $id; ok = $true; nonce = $nonce; session = $true }
+                } catch {
+                    $resp = @{ id = $id; ok = $false; nonce = $nonce
+                               error = "guest session with the supplied credential failed: $($_.Exception.Message)" }
+                }
+                Send-Obj $resp
+            }
             'ident' {
+                # Establish the session here when 'auth' did not:
+                # the host gates every payload on this flag.
+                try { Ensure-GuestSession } catch { }
                 $resp = @{ kind = 'ident'; nonce = $nonce; hostname = $env:COMPUTERNAME
                            session = ($null -ne $session) }
                 Send-Obj $resp

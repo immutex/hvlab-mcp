@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use crate::path_policy::PathPolicy;
 use crate::protocol::{FrameError, MAX_FRAME_LEN, read_frame, write_frame};
 use crate::psdirect::{
-    ExecSpec, IDENT_TIMEOUT, PsDirectSession, b64_decode, b64_encode, sha256_hex,
+    ExecSpec, GuestCredential, IDENT_TIMEOUT, PsDirectSession, b64_decode, b64_encode, sha256_hex,
 };
 use crate::sidecar;
 use hvlab_core::error::ErrorCode;
@@ -370,6 +370,17 @@ while ($true) {
 
     try {
         switch ([string]$req.kind) {
+            'auth' {
+                if ($Behavior -match '^record-auth=(.+)$') {
+                    [IO.File]::WriteAllText($Matches[1],
+                        "kind=$($req.kind) round=$rounds user=$($req.user) password=$([System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($req.password_b64)))")
+                }
+                if ($Behavior -eq 'bad-credential') {
+                    Send-Obj @{ id = $id; ok = $false; nonce = $nonce; error = 'guest refused the credential' }
+                } else {
+                    Send-Obj @{ id = $id; ok = $true; nonce = $nonce; session = $true }
+                }
+            }
             'ident' {
                 $echo = if ($Behavior -eq 'wrong-nonce') { 'deadbeefdeadbeefdeadbeefdeadbeef' } else { $nonce }
                 Send-Obj @{ kind = 'ident'; nonce = $echo; hostname = $hostname; session = $true }
@@ -429,6 +440,63 @@ fn open_fake(
     expect_host: Option<&str>,
 ) -> Result<PsDirectSession, hvlab_core::error::HvError> {
     PsDirectSession::open_with_command("FakeVM", expect_host, &fake::command(behavior))
+}
+
+#[cfg(windows)]
+#[test]
+fn credential_frame_precedes_identity_and_reaches_the_sidecar() {
+    let record = std::env::temp_dir().join(format!("hvlab-auth-{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&record);
+    let behavior = format!("record-auth={}", record.display());
+
+    let credential = GuestCredential::new("DRV-TEST\\drvtest", "s3cret-test-value");
+    let opened = PsDirectSession::open_with_command_and_credential(
+        "FakeVM",
+        None,
+        &credential,
+        &fake::command(&behavior),
+    );
+    let session = opened.expect("credential handshake");
+    assert!(session.session_established());
+    assert_eq!(session.hostname(), "FAKE-GUEST");
+
+    let recorded = std::fs::read_to_string(&record).expect("fake recorded the auth frame");
+    let _ = std::fs::remove_file(&record);
+    assert!(
+        recorded.starts_with("kind=auth round=1 "),
+        "auth must be the first frame: {recorded}"
+    );
+    assert!(recorded.contains("user=DRV-TEST\\drvtest"), "{recorded}");
+    assert!(
+        recorded.contains("password=s3cret-test-value"),
+        "{recorded}"
+    );
+
+    // The password must never ride the sidecar command line (H-34).
+    assert!(!fake::command("normal").contains("s3cret-test-value"));
+    assert!(!sidecar::sidecar_command("FakeVM").contains("s3cret-test-value"));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_refused_credential_fails_the_open() {
+    let credential = GuestCredential::new("u", "wrong-password");
+    let opened = PsDirectSession::open_with_command_and_credential(
+        "FakeVM",
+        None,
+        &credential,
+        &fake::command("bad-credential"),
+    );
+    let err = opened.expect_err("refused credential must fail");
+    assert_eq!(err.code, ErrorCode::GuestUnreachable);
+}
+
+#[test]
+fn credential_debug_never_prints_the_password() {
+    let credential = GuestCredential::new("someone", "do-not-print-me");
+    let rendered = format!("{credential:?}");
+    assert!(rendered.contains("***"), "{rendered}");
+    assert!(!rendered.contains("do-not-print-me"), "{rendered}");
 }
 
 #[cfg(windows)]

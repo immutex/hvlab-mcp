@@ -16,7 +16,9 @@ pub mod sidecar;
 
 pub use path_policy::{PathPolicy, ResolvedPath};
 pub use protocol::{FrameError, MAX_FRAME_LEN, read_frame, write_frame};
-pub use psdirect::{ExecResult, ExecSpec, PsDirectSession, b64_decode, b64_encode, sha256_hex};
+pub use psdirect::{
+    ExecResult, ExecSpec, GuestCredential, PsDirectSession, b64_decode, b64_encode, sha256_hex,
+};
 pub use sidecar::{SIDECAR_SCRIPT, sidecar_command, sidecar_script};
 
 #[cfg(test)]

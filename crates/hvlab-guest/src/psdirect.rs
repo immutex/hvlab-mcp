@@ -42,6 +42,45 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 #[cfg(windows)]
 use std::os::windows::process::CommandExt as _;
 
+/// Guest logon credential for PS Direct.
+///
+/// The password travels only inside the framed sidecar channel (as
+/// base64, like every other payload) and is turned into a
+/// `PSCredential` inside the sidecar. It never appears in a command
+/// line, a temp file, or a log line; `Debug` prints `***` for it.
+#[derive(Clone)]
+pub struct GuestCredential {
+    /// Guest account name (for example `HOST\user` or `user`).
+    pub user: String,
+    password: String,
+}
+
+impl GuestCredential {
+    /// Build a credential from its two parts.
+    #[must_use]
+    pub fn new(user: impl Into<String>, password: impl Into<String>) -> Self {
+        Self {
+            user: user.into(),
+            password: password.into(),
+        }
+    }
+
+    /// The password, for the framed auth request only.
+    #[must_use]
+    pub fn password(&self) -> &str {
+        &self.password
+    }
+}
+
+impl std::fmt::Debug for GuestCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GuestCredential")
+            .field("user", &self.user)
+            .field("password", &"***")
+            .finish()
+    }
+}
+
 /// Arguments for one exec request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExecSpec {
@@ -114,6 +153,10 @@ struct Request {
     #[serde(skip_serializing_if = "Option::is_none")]
     script_b64: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    password_b64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     sha256: Option<String>,
@@ -131,10 +174,22 @@ impl Request {
             argv: None,
             timeout_ms: None,
             script_b64: None,
+            user: None,
+            password_b64: None,
             path: None,
             sha256: None,
             data_b64: None,
         }
+    }
+
+    /// The pre-identity credential frame. Sent only when the caller
+    /// supplied a credential; the sidecar turns it into a
+    /// `PSCredential` before creating the session.
+    fn auth(id: u64, nonce: &str, credential: &GuestCredential) -> Self {
+        let mut req = Self::new(id, "auth", nonce);
+        req.user = Some(credential.user.clone());
+        req.password_b64 = Some(b64_encode(credential.password().as_bytes()));
+        req
     }
 }
 
@@ -178,6 +233,7 @@ pub struct PsDirectSession {
     nonce: String,
     hostname: String,
     expected_hostname: Option<String>,
+    credential: Option<GuestCredential>,
     session_established: bool,
     request_timeout: Duration,
     dead: bool,
@@ -327,7 +383,28 @@ impl PsDirectSession {
     /// # Errors
     /// Same surface as [`Self::open_with_command`].
     pub fn open(vm_name: &str, expected_hostname: Option<&str>) -> Result<Self, HvError> {
-        Self::open_with_command(vm_name, expected_hostname, &sidecar_command(vm_name))
+        Self::open_inner(vm_name, expected_hostname, None, &sidecar_command(vm_name))
+    }
+
+    /// Open with a guest credential. PS Direct requires credentials on
+    /// any guest with a logon password; the credential travels over
+    /// the framed channel (see [`GuestCredential`]), never the command
+    /// line.
+    ///
+    /// # Errors
+    /// Same surface as [`Self::open`], plus the sidecar's refusal when
+    /// the credential is rejected by the guest.
+    pub fn open_with_credential(
+        vm_name: &str,
+        expected_hostname: Option<&str>,
+        credential: &GuestCredential,
+    ) -> Result<Self, HvError> {
+        Self::open_inner(
+            vm_name,
+            expected_hostname,
+            Some(credential.clone()),
+            &sidecar_command(vm_name),
+        )
     }
 
     /// Open with an arbitrary sidecar command line — the seam hermetic
@@ -342,6 +419,35 @@ impl PsDirectSession {
     pub fn open_with_command(
         vm_name: &str,
         expected_hostname: Option<&str>,
+        loop_cmd: &str,
+    ) -> Result<Self, HvError> {
+        Self::open_inner(vm_name, expected_hostname, None, loop_cmd)
+    }
+
+    /// Open with an explicit credential and an arbitrary sidecar
+    /// command line — the seam hermetic tests use to assert the auth
+    /// frame travels before any identity or payload frame.
+    ///
+    /// # Errors
+    /// Same surface as [`Self::open_with_command`].
+    pub fn open_with_command_and_credential(
+        vm_name: &str,
+        expected_hostname: Option<&str>,
+        credential: &GuestCredential,
+        loop_cmd: &str,
+    ) -> Result<Self, HvError> {
+        Self::open_inner(
+            vm_name,
+            expected_hostname,
+            Some(credential.clone()),
+            loop_cmd,
+        )
+    }
+
+    fn open_inner(
+        vm_name: &str,
+        expected_hostname: Option<&str>,
+        credential: Option<GuestCredential>,
         loop_cmd: &str,
     ) -> Result<Self, HvError> {
         if vm_name.trim().is_empty() {
@@ -411,6 +517,7 @@ impl PsDirectSession {
             nonce: String::new(),
             hostname: String::new(),
             expected_hostname: expected_hostname.map(str::to_owned),
+            credential,
             session_established: false,
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             dead: false,
@@ -433,6 +540,29 @@ impl PsDirectSession {
     /// and hostname before any payload is sent.
     fn handshake(&mut self, vm_name: &str) -> Result<(), HvError> {
         self.nonce = Uuid::now_v7().simple().to_string();
+        // Credential first, identity second: the sidecar creates the
+        // guest session with the credential before anything else can
+        // run, and the nonce below still gates every payload (H-36).
+        if let Some(credential) = &self.credential {
+            let auth = Request::auth(0, &self.nonce, credential);
+            write_frame(&mut self.stdin, &auth)
+                .map_err(|e| spawn_error(vm_name, format!("failed writing auth: {e}")))?;
+            self.stdin
+                .flush()
+                .map_err(|e| spawn_error(vm_name, format!("failed flushing auth: {e}")))?;
+
+            let auth_resp = self.await_response(IDENT_TIMEOUT, vm_name)?;
+            if !auth_resp.ok {
+                let detail = auth_resp
+                    .error
+                    .unwrap_or_else(|| "guest refused the credential".to_owned());
+                return Err(HvError::new(
+                    ErrorCode::GuestUnreachable,
+                    format!("PS Direct session for VM '{vm_name}' failed: {detail}"),
+                )
+                .with_context("vm", vm_name));
+            }
+        }
         let req = Request::new(0, "ident", &self.nonce);
         write_frame(&mut self.stdin, &req)
             .map_err(|e| spawn_error(vm_name, format!("failed writing ident: {e}")))?;
