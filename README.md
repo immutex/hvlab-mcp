@@ -266,7 +266,9 @@ No test binds a physical adapter.
 
 ## Status
 
-Implemented: host facts, VM lifecycle and configuration, checkpoints, VHD/VHDX storage, networking, devices, PowerShell Direct execution, and crash-dump triage.
+Implemented: host facts, VM lifecycle and configuration, checkpoints, VHD/VHDX storage, networking, devices, PowerShell Direct execution including credential-bearing guest sessions, and crash-dump triage.
+
+The MCP server is the full surface. The CLI is narrower: it has `dump inspect`, `tools`, `mcp` and a stub `doctor`, so VM lifecycle, checkpoints and guest execution are reachable only over MCP.
 
 Not implemented. These are design targets in [PLAN.md](PLAN.md), not current features:
 
@@ -277,6 +279,7 @@ Not implemented. These are design targets in [PLAN.md](PLAN.md), not current fea
 - Orchestration: `hv_recover`, soak runs, watchdog, recipes
 - HTTP transport, artifact server, metrics
 - The declarative policy layer (`mode`, `vm_allowlist`). Classes and plan tokens are enforced; the TOML policy file is not built
+- Secret storage beyond the environment. Guest credentials are read from environment variables only; Windows Credential Manager support (PLAN.md §7.3) is not built
 - `hvlab doctor`, currently a stub
 
 Contributions are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) first, and note that this project follows the [Contributor Covenant](CODE_OF_CONDUCT.md). Licensed under either the [Apache License, Version 2.0](LICENSE-APACHE) or the [MIT license](LICENSE-MIT), at your option. See [NOTICE](NOTICE) for attribution.
