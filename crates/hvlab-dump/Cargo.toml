@@ -12,7 +12,7 @@ description = "Windows crash dump parsing and triage for hvlab"
 [dependencies]
 thiserror = { workspace = true }
 serde = { workspace = true }
-kdmp-parser = "0.8.2"
+kdmp-parser = "0.9.0"
 
 [dev-dependencies]
 proptest = { workspace = true }
